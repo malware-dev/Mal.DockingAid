@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net48</TargetFramework>
+        <SpaceEngineersBinCopyLocal>true</SpaceEngineersBinCopyLocal>
+        <Configurations>Release;Debug</Configurations>
+        <Platforms>x64</Platforms>
+        <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+        <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="FakeItEasy" Version="8.3.0"/>
+        <PackageReference Include="FakeItEasy.Analyzer.CSharp" Version="6.1.1">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
+        <PackageReference Include="Mal.Mdk2.References" Version="2.*">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
+        <PackageReference Include="NUnit" Version="4.3.2"/>
+        <PackageReference Include="NUnit3TestAdapter" Version="4.6.0"/>
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <Reference Include="System.Memory">
+            <HintPath>E:\Steam\steamapps\common\SpaceEngineers\Bin64\System.Memory.dll</HintPath>
+            <Private>True</Private>
+        </Reference>
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Mal.DockingAid\Mal.DockingAid.csproj" />
+    </ItemGroup>
+
+</Project>
