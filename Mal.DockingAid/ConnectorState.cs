@@ -29,7 +29,9 @@ namespace Mal.DockingAid
         public static bool GetUsedForDocking(IMyTerminalBlock block)
         {
             var ini = LoadIni(block as IMyEntity);
-            return ini.Get(IniSection, KeyUsedForDocking).ToBoolean(false);
+            // Default ON to match vanilla "Use for parking": every connector is
+            // a docking candidate until the player opts out.
+            return ini.Get(IniSection, KeyUsedForDocking).ToBoolean(true);
         }
 
         public static void SetUsedForDocking(IMyTerminalBlock block, bool value)
