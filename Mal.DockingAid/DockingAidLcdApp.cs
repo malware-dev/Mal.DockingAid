@@ -231,8 +231,8 @@ namespace Mal.DockingAid
                 // chevrons + rails are Chrome. (Earlier this dimmed the target
                 // ring too — wrong: it's the single most important thing to
                 // see, especially on small LCDs.)
-                DrawReticle(frame, layout, _palette.Chrome);
-                DrawPitchYawCross(frame, layout, alignment, indicatorColor, _palette.Chrome);
+                DrawReticle(frame, layout, _palette.Body);
+                DrawPitchYawCross(frame, layout, alignment, indicatorColor, _palette.Body);
                 DrawTargetRing(frame, layout, src, tgt, screenRight, screenUp, indicatorColor);
                 DrawRollChevronPair(frame, layout, 0.0, _palette.Chrome);
                 DrawRollChevronPair(frame, layout, alignment.RollRadians, indicatorColor);
@@ -297,7 +297,7 @@ namespace Mal.DockingAid
         {
             DrawReticle(frame, layout, _palette.Accent);
             DrawCenteredBigText(frame, layout, "LOCKED", _palette.Accent);
-            DrawConnectorLabel(frame, layout, NameOf(src), _palette.Body);
+            DrawConnectorLabel(frame, layout, NameOf(src), _palette.Foreground);
         }
 
         // The controller the LOCAL player is actively piloting, but only if
@@ -343,7 +343,7 @@ namespace Mal.DockingAid
                 "CLO " + closure.ToString("+0.00;-0.00; 0.00") + " m/s",
                 _palette.Body, layout.NumericTextScale, TextAlignment.RIGHT);
             DrawCenteredText(frame, layout, "NO PILOT REFERENCE", _palette.Faint, layout.StatusTextScale);
-            DrawConnectorLabel(frame, layout, NameOf(src), _palette.Body);
+            DrawConnectorLabel(frame, layout, NameOf(src), _palette.Foreground);
         }
 
         static string NameOf(IMyShipConnector c)
@@ -606,7 +606,7 @@ namespace Mal.DockingAid
                 palette.Foreground, layout.NumericTextScale, TextAlignment.RIGHT);
 
             // Bottom-centre: source connector name (which one is driving us).
-            DrawConnectorLabel(frame, layout, NameOf(src), palette.Body);
+            DrawConnectorLabel(frame, layout, NameOf(src), palette.Foreground);
         }
 
         static void DrawText(MySpriteDrawFrame frame, Vector2 position, string text,
