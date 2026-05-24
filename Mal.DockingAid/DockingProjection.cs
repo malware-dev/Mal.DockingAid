@@ -142,17 +142,28 @@ namespace Mal.DockingAid
             return result;
         }
 
-        // Nav-camera basis: screenRight tracks the pilot's +Right axis projected
-        // onto the bore-perp plane, screenUp tracks pilot +Up the same way, with
-        // pilot +Forward kept only as the degenerate-fallback when the bore is
-        // parallel to one of them (side / top / bottom mounts).
+        // Nav-camera basis. Three regimes:
         //
-        // pilotRight is taken as INPUT, not derived from pilotUp × pilotFwd.
-        // SE's handedness was a constant source of off-by-a-sign bugs because
-        // both the test fixtures and this routine were deriving Right with the
-        // same wrong cross-product order, agreeing with each other but flipping
-        // the lateral axis in-game. Now we just trust pilot.WorldMatrix.Right —
-        // whatever SE says is right IS right, by definition.
+        //   • FWD/AFT (bore along ±pilot.fwd): both pilotRight and pilotUp
+        //     project cleanly onto the bore-perp plane → SR=+pilotRight,
+        //     SU=+pilotUp. Same for both FWD and AFT — AFT is intentionally
+        //     lateral-preserved (a backup-camera-style mirror, not a "look
+        //     behind you" rotation), so the pilot's +Right always reads on the
+        //     screen's right regardless of which way the bore points.
+        //
+        //   • LEFT/RIGHT (bore along ±pilot.right): pilotRight projection
+        //     vanishes. Fall back to bore × pilotUp, whose SIGN flips between
+        //     the two sides — restoring the "turn your head 90° to look out
+        //     the side" handedness. Things ahead of the ship read on the right
+        //     of a left-side feed and on the left of a right-side feed.
+        //
+        //   • TOP/BOTTOM (bore along ±pilot.up): pilotUp projection vanishes.
+        //     Fall back to pilotRight × bore for SU, sign flipping between top
+        //     and bottom the same way.
+        //
+        // pilotRight is taken as INPUT (not derived) because SE's handedness
+        // bit us before: both this routine and the test fixtures were deriving
+        // Right with the same wrong cross-product order. Trust WorldMatrix.Right.
         public static void ScreenBasis(Vector3D connectorForward,
             Vector3D pilotRight, Vector3D pilotUp, Vector3D pilotForward,
             out Vector3D screenRight, out Vector3D screenUp)
@@ -160,20 +171,15 @@ namespace Mal.DockingAid
             var f = SafeNormalize(connectorForward, new Vector3D(0, 0, 1));
             var pR = SafeNormalize(pilotRight, new Vector3D(1, 0, 0));
             var pU = SafeNormalize(pilotUp, new Vector3D(0, 1, 0));
-            var pF = SafeNormalize(pilotForward, new Vector3D(0, 0, -1));
 
-            // screenRight = pilotRight ⊥ bore, with pilotForward fallback when
-            // bore ≈ ±pilotRight (the projection vanishes).
             var r = pR - Vector3D.Dot(pR, f) * f;
             if (r.LengthSquared() < 0.01)
-                r = pF - Vector3D.Dot(pF, f) * f;
+                r = Vector3D.Cross(f, pU);
             screenRight = Vector3D.Normalize(r);
 
-            // screenUp = pilotUp ⊥ bore, with pilotForward fallback when
-            // bore ≈ ±pilotUp.
             var u = pU - Vector3D.Dot(pU, f) * f;
             if (u.LengthSquared() < 0.01)
-                u = pF - Vector3D.Dot(pF, f) * f;
+                u = Vector3D.Cross(pR, f);
 
             // Gram-Schmidt: keep screenUp perpendicular to screenRight in case
             // an oblique bore left them non-orthogonal.

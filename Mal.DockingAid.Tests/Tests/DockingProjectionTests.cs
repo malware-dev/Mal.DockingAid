@@ -245,43 +245,82 @@ namespace Mal.DockingAid.Tests.Tests
                 "connector build-roll must not move the ring when up-ref is the ship");
         }
 
-        // Non-mirrored convention, pinned to the two in-game probes the player
-        // confirmed (TBM, side-mounted connector srcF≈+X, seatUp≈+Y,
-        // seatFwd≈+Z):
-        //   • target offset toward +seatUp   ⇒ ring ABOVE centre (vertical OK)
-        //   • target offset toward +seatFwd  ⇒ ring to the RIGHT of centre
-        //     (equivalently: flying the ship +forward, the target moves -fwd
-        //     relative ⇒ ring goes LEFT — the player's required behaviour)
-        // Connector build-roll must not affect any of this.
+        // Side / top / bottom mounts use opposite handedness between the two
+        // halves of each antipode pair — like turning your head 90° to look
+        // out the side / up / down. SE pilot frame (forward = −Z) used so the
+        // formula `bore × pilotUp` (and `pilotRight × bore`) produce signs that
+        // match what the in-game projection does. Verticals natural in all
+        // cases; only the active fallback axis flips.
+
+        // SE pilot frame: right +X, up +Y, forward −Z.
+        static readonly Vector3D SE_PR = new Vector3D(1, 0, 0);
+        static readonly Vector3D SE_PU = new Vector3D(0, 1, 0);
+        static readonly Vector3D SE_PF = new Vector3D(0, 0, -1);
+
         [Test]
-        public void Ship_referenced_view_is_not_mirrored_matches_in_game_probes()
+        public void Right_side_mount_target_ahead_reads_left_of_centre()
         {
-            var seatRight = new Vector3D(1, 0, 0);
-            var seatUp = new Vector3D(0, 1, 0);
-            var seatFwd = new Vector3D(0, 0, 1);
-            // Connector points along world +X (side-mounted, like the TBM),
-            // and is rolled arbitrarily — must not matter.
+            // Bore = +pilotRight (+X). Target 10 m down the bore, 1 m toward
+            // +pilotForward (= −Z in SE).
             var src = FakeConnector.At(Vector3D.Zero,
                 forward: new Vector3D(1, 0, 0), up: new Vector3D(0, 0, 1));
-
             Vector3D r, u;
-            DockingProjection.ScreenBasis(src.WorldMatrix.Forward, seatRight, seatUp, seatFwd, out r, out u);
+            DockingProjection.ScreenBasis(src.WorldMatrix.Forward, SE_PR, SE_PU, SE_PF, out r, out u);
 
-            // Target ahead along the bore (+X), offset toward +seatUp (+Y).
-            var tgtUp = FakeConnector.At(new Vector3D(10, 1, 0),
+            var tgtFwd = FakeConnector.At(new Vector3D(10, 0, -1),
                 forward: new Vector3D(-1, 0, 0), up: Vector3D.Up);
-            var ringUp = DockingProjection.Project(src, tgtUp, r, u, ScreenCenter, ReticleRadius, FallbackPx);
-            Assert.That(ringUp.ScreenCenter.Y, Is.LessThan(ScreenCenter.Y),
-                "+seatUp offset ⇒ ring above centre (confirmed in-game)");
+            var ring = DockingProjection.Project(src, tgtFwd, r, u, ScreenCenter, ReticleRadius, FallbackPx);
+            Assert.That(ring.ScreenCenter.X, Is.LessThan(ScreenCenter.X),
+                "right-side mount: +pilotForward target reads LEFT of centre");
+        }
 
-            // Target ahead along the bore (+X), offset toward +seatFwd (+Z).
-            var tgtFwd = FakeConnector.At(new Vector3D(10, 0, 1),
-                forward: new Vector3D(-1, 0, 0), up: Vector3D.Up);
-            var ringFwd = DockingProjection.Project(src, tgtFwd, r, u, ScreenCenter, ReticleRadius, FallbackPx);
-            Assert.That(ringFwd.ScreenCenter.X, Is.GreaterThan(ScreenCenter.X),
-                "+seatFwd offset ⇒ ring right of centre (so ship-forward ⇒ ring left)");
-            Assert.That(ringFwd.ScreenCenter.Y, Is.EqualTo(ScreenCenter.Y).Within(0.5f),
-                "pure fore/aft offset stays on the horizontal axis");
+        [Test]
+        public void Left_side_mount_target_ahead_reads_right_of_centre()
+        {
+            // Bore = −pilotRight (−X). Target 10 m down the bore.
+            var src = FakeConnector.At(Vector3D.Zero,
+                forward: new Vector3D(-1, 0, 0), up: new Vector3D(0, 0, 1));
+            Vector3D r, u;
+            DockingProjection.ScreenBasis(src.WorldMatrix.Forward, SE_PR, SE_PU, SE_PF, out r, out u);
+
+            var tgtFwd = FakeConnector.At(new Vector3D(-10, 0, -1),
+                forward: new Vector3D(1, 0, 0), up: Vector3D.Up);
+            var ring = DockingProjection.Project(src, tgtFwd, r, u, ScreenCenter, ReticleRadius, FallbackPx);
+            Assert.That(ring.ScreenCenter.X, Is.GreaterThan(ScreenCenter.X),
+                "left-side mount: +pilotForward target reads RIGHT of centre");
+        }
+
+        [Test]
+        public void Top_mount_target_ahead_reads_below_centre()
+        {
+            // Bore = +pilotUp (+Y). Head tilted back to look up ⇒ what's ahead
+            // of the ship reads at the bottom of the feed.
+            var src = FakeConnector.At(Vector3D.Zero,
+                forward: new Vector3D(0, 1, 0), up: new Vector3D(1, 0, 0));
+            Vector3D r, u;
+            DockingProjection.ScreenBasis(src.WorldMatrix.Forward, SE_PR, SE_PU, SE_PF, out r, out u);
+
+            var tgtFwd = FakeConnector.At(new Vector3D(0, 10, -1),
+                forward: new Vector3D(0, -1, 0), up: Vector3D.Up);
+            var ring = DockingProjection.Project(src, tgtFwd, r, u, ScreenCenter, ReticleRadius, FallbackPx);
+            Assert.That(ring.ScreenCenter.Y, Is.GreaterThan(ScreenCenter.Y),
+                "top mount: +pilotForward target reads BELOW centre (pixel-Y grows down)");
+        }
+
+        [Test]
+        public void Bottom_mount_target_ahead_reads_above_centre()
+        {
+            // Bore = −pilotUp (−Y). Mirror of top mount.
+            var src = FakeConnector.At(Vector3D.Zero,
+                forward: new Vector3D(0, -1, 0), up: new Vector3D(1, 0, 0));
+            Vector3D r, u;
+            DockingProjection.ScreenBasis(src.WorldMatrix.Forward, SE_PR, SE_PU, SE_PF, out r, out u);
+
+            var tgtFwd = FakeConnector.At(new Vector3D(0, -10, -1),
+                forward: new Vector3D(0, 1, 0), up: Vector3D.Up);
+            var ring = DockingProjection.Project(src, tgtFwd, r, u, ScreenCenter, ReticleRadius, FallbackPx);
+            Assert.That(ring.ScreenCenter.Y, Is.LessThan(ScreenCenter.Y),
+                "bottom mount: +pilotForward target reads ABOVE centre");
         }
 
         // Real orientations from the captured cockpit log (TBM source / HOST
