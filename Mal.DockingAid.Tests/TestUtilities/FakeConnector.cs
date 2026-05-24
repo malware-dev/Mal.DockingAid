@@ -24,11 +24,18 @@ namespace Mal.DockingAid.Tests.TestUtilities
             var grid = A.Fake<IMyCubeGrid>();
             A.CallTo(() => grid.GridSize).Returns(gridSize);
 
-            // Build a right-handed orthonormal matrix from forward + up; mirrors
-            // SE's WorldMatrix conventions (Forward, Up, Right are basis axes).
+            // Build a right-handed orthonormal matrix from forward + up. SE /
+            // VRageMath follows the DirectX RH convention: Right = Forward × Up
+            // (you can verify from the Vector3D.Right/Up/Forward constants:
+            // Forward = (0,0,-1), Up = (0,1,0), Right = (1,0,0); and indeed
+            // Cross(Forward, Up) = (1,0,0)). The earlier formula here was
+            // Cross(Up, Forward) which is -Right, and it accidentally agreed
+            // with a matching sign-flip in ScreenBasis — together they formed
+            // a self-consistent bubble that passed every offline test but was
+            // mirrored in-game. Fixed in both places.
             var fwd = Vector3D.Normalize(forward);
             var u = Vector3D.Normalize(up - Vector3D.Dot(up, fwd) * fwd);
-            var right = Vector3D.Cross(u, fwd); // right-handed: U × F = R
+            var right = Vector3D.Cross(fwd, u);
             var matrix = MatrixD.Identity;
             matrix.Right = right;
             matrix.Up = u;

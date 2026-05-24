@@ -64,9 +64,10 @@ namespace Mal.DockingAid.Tests.Tests
         public void Roll_error_is_signed_and_matches_the_target_up_rotation()
         {
             // Target rotated 30° around source forward — its Up tilts toward
-            // source's Right. RollRadians is signed (-Atan2(rightDot, upDot))
-            // so the chevron sweeps in "fly to needle" direction; a +30°
-            // physical rotation reads as a negative roll value.
+            // source's Right (positive screenRight). Fly-to-needle: pilot
+            // should roll RIGHT to bring their up onto target's up, so the
+            // chevron must sit at angle > 0 (right of top). RollRadians is
+            // therefore positive in this scenario.
             const double thetaDeg = 30.0;
             double t = thetaDeg * (Math.PI / 180.0);
 
@@ -78,10 +79,9 @@ namespace Mal.DockingAid.Tests.Tests
 
             var a = DockingAlignment.Compute(src, tgt, Vector3D.Right, Vector3D.Up);
 
-            // Magnitude should match the input rotation; sign is a single
-            // documented flip — pin both.
             Assert.That(Math.Abs(a.RollRadians), Is.EqualTo(t).Within(1e-6));
-            Assert.That(a.RollRadians, Is.LessThan(0.0));
+            Assert.That(a.RollRadians, Is.GreaterThan(0.0),
+                "target up tilted toward +screenRight ⇒ chevron right ⇒ +rollRadians");
         }
 
         [Test]
@@ -130,11 +130,11 @@ namespace Mal.DockingAid.Tests.Tests
                 "180°-apart mount is connectable as-is: roll error must fold to ~0");
         }
 
-        // The fold must never ask for more than a quarter-turn: a 135° physical
-        // up-rotation (raw roll −135°) is equivalent to +45° for a roll-free
-        // connector after folding by 180°.
+        // SE connector faces are 4-fold symmetric and there's no canonical "up"
+        // for a target in space, so the fold is by π/2: the cue always points
+        // at the nearest of 4 cardinal orientations. Cap is ±45°, never more.
         [Test]
-        public void Roll_error_never_exceeds_a_quarter_turn()
+        public void Roll_error_never_exceeds_45_degrees()
         {
             const double rawDeg = 135.0;
             double t = rawDeg * (Math.PI / 180.0);
@@ -147,10 +147,39 @@ namespace Mal.DockingAid.Tests.Tests
 
             var a = DockingAlignment.Compute(src, tgt, Vector3D.Right, Vector3D.Up);
 
-            Assert.That(Math.Abs(a.RollRadians), Is.LessThanOrEqualTo(Math.PI / 2.0 + 1e-9),
-                "folded roll must never exceed 90°");
-            // Raw roll −135° folds to the shortest equivalent: +45°.
-            Assert.That(a.RollRadians * (180.0 / Math.PI), Is.EqualTo(45.0).Within(1e-6));
+            Assert.That(Math.Abs(a.RollRadians), Is.LessThanOrEqualTo(Math.PI / 4.0 + 1e-9),
+                "fold by π/2 ⇒ |rollRadians| ≤ 45°");
+            // Raw +135° sits exactly between +90° and +180° cardinals; banker's
+            // rounding picks +180° as the nearest, leaving residual −45°.
+            Assert.That(a.RollRadians * (180.0 / Math.PI), Is.EqualTo(-45.0).Within(1e-6));
+        }
+
+        // (B) regression: a target connector built rolled 90° on its mount
+        // (its Up axis perpendicular to the target ship's Up) used to fabricate
+        // a phantom 90° roll demand, resting the chevron at 9 o'clock instead
+        // of 12. With fold-by-π/2 the chevron sits at 0 regardless of the
+        // build-roll: all 4 cardinal mounts read as docked.
+        [Test]
+        public void Target_connector_built_rolled_90deg_does_not_demand_roll()
+        {
+            foreach (var tgtUp in new[]
+            {
+                new Vector3D(0, 1, 0),    //   0° build-roll
+                new Vector3D(1, 0, 0),    //  90° build-roll (target Up = +screenRight)
+                new Vector3D(0, -1, 0),   // 180°
+                new Vector3D(-1, 0, 0),   // 270°
+            })
+            {
+                var src = FakeConnector.At(Vector3D.Zero,
+                    forward: new Vector3D(0, 0, 1), up: Vector3D.Up);
+                var tgt = FakeConnector.At(new Vector3D(0, 0, Sep),
+                    forward: new Vector3D(0, 0, -1), up: tgtUp);
+
+                var a = DockingAlignment.Compute(src, tgt, Vector3D.Right, Vector3D.Up);
+
+                Assert.That(a.RollRadians, Is.EqualTo(0.0).Within(1e-6),
+                    "target tgtUp=" + tgtUp + " is a cardinal mount; should read as docked");
+            }
         }
 
         // ── Unified cross: same screen frame as the ring ────────────────────
@@ -217,6 +246,46 @@ namespace Mal.DockingAid.Tests.Tests
 
             Assert.That(b.PitchComponent, Is.EqualTo(a.PitchComponent).Within(1e-9));
             Assert.That(b.YawComponent, Is.EqualTo(a.YawComponent).Within(1e-9));
+        }
+
+        // Roll, too, must be measured in the screen frame — independent of the
+        // connector's build-roll. Same target + same screen basis ⇒ identical
+        // RollRadians no matter how the source connector is rolled.
+        [Test]
+        public void Roll_is_independent_of_connector_build_roll()
+        {
+            double t = 22.0 * (Math.PI / 180.0);
+            var tgt = FakeConnector.At(new Vector3D(0, 0, Sep),
+                forward: new Vector3D(0, 0, -1),
+                up: new Vector3D(Math.Sin(t), Math.Cos(t), 0));
+            var src = FakeConnector.At(Vector3D.Zero,
+                forward: new Vector3D(0, 0, 1), up: new Vector3D(0, 1, 0));
+            var srcRolled = FakeConnector.At(Vector3D.Zero,
+                forward: new Vector3D(0, 0, 1), up: new Vector3D(1, 0, 0)); // 90° roll
+
+            var a = DockingAlignment.Compute(src, tgt, Vector3D.Right, Vector3D.Up);
+            var b = DockingAlignment.Compute(srcRolled, tgt, Vector3D.Right, Vector3D.Up);
+
+            Assert.That(b.RollRadians, Is.EqualTo(a.RollRadians).Within(1e-9));
+        }
+
+        // Regression for the "Jackdaw" rear-mounted connector: built rolled 90°
+        // (up = +X) on a forward-+Z connector, but the connectors are mate-
+        // aligned and the target's Up matches the pilot/screen Up. Connector-
+        // basis roll fabricated +90°; screen-basis roll must read ~0.
+        [Test]
+        public void Rear_mounted_connector_does_not_fabricate_90deg_roll()
+        {
+            var src = FakeConnector.At(Vector3D.Zero,
+                forward: new Vector3D(0, 0, 1), up: new Vector3D(1, 0, 0)); // built rolled 90°
+            var tgt = FakeConnector.At(new Vector3D(0, 0, Sep),
+                forward: new Vector3D(0, 0, -1), up: new Vector3D(0, 1, 0));
+
+            // Screen frame = pilot frame (+X right / +Y up), NOT the connector.
+            var a = DockingAlignment.Compute(src, tgt, Vector3D.Right, Vector3D.Up);
+
+            Assert.That(a.RollRadians, Is.EqualTo(0.0).Within(1e-6),
+                "rear-mounted connector must not demand a phantom 90° roll");
         }
     }
 }

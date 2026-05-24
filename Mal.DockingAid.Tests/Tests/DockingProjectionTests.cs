@@ -225,6 +225,7 @@ namespace Mal.DockingAid.Tests.Tests
         [Test]
         public void Connector_build_roll_does_not_move_ring_with_ship_up_reference()
         {
+            var shipRight = new Vector3D(1, 0, 0);
             var shipUp = new Vector3D(0, 1, 0);
             var shipFwd = new Vector3D(0, 0, 1);
             var srcA = FakeConnector.At(Vector3D.Zero,
@@ -235,8 +236,8 @@ namespace Mal.DockingAid.Tests.Tests
                 forward: new Vector3D(0, 0, -1), up: Vector3D.Up);
 
             Vector3D rA, uA, rB, uB;
-            DockingProjection.ScreenBasis(srcA.WorldMatrix.Forward, shipUp, shipFwd, out rA, out uA);
-            DockingProjection.ScreenBasis(srcB.WorldMatrix.Forward, shipUp, shipFwd, out rB, out uB);
+            DockingProjection.ScreenBasis(srcA.WorldMatrix.Forward, shipRight, shipUp, shipFwd, out rA, out uA);
+            DockingProjection.ScreenBasis(srcB.WorldMatrix.Forward, shipRight, shipUp, shipFwd, out rB, out uB);
             var ringA = DockingProjection.Project(srcA, tgt, rA, uA, ScreenCenter, ReticleRadius, FallbackPx);
             var ringB = DockingProjection.Project(srcB, tgt, rB, uB, ScreenCenter, ReticleRadius, FallbackPx);
 
@@ -255,6 +256,7 @@ namespace Mal.DockingAid.Tests.Tests
         [Test]
         public void Ship_referenced_view_is_not_mirrored_matches_in_game_probes()
         {
+            var seatRight = new Vector3D(1, 0, 0);
             var seatUp = new Vector3D(0, 1, 0);
             var seatFwd = new Vector3D(0, 0, 1);
             // Connector points along world +X (side-mounted, like the TBM),
@@ -263,7 +265,7 @@ namespace Mal.DockingAid.Tests.Tests
                 forward: new Vector3D(1, 0, 0), up: new Vector3D(0, 0, 1));
 
             Vector3D r, u;
-            DockingProjection.ScreenBasis(src.WorldMatrix.Forward, seatUp, seatFwd, out r, out u);
+            DockingProjection.ScreenBasis(src.WorldMatrix.Forward, seatRight, seatUp, seatFwd, out r, out u);
 
             // Target ahead along the bore (+X), offset toward +seatUp (+Y).
             var tgtUp = FakeConnector.At(new Vector3D(10, 1, 0),
@@ -289,12 +291,13 @@ namespace Mal.DockingAid.Tests.Tests
         [Test]
         public void Logged_cockpit_orientation_yields_orthonormal_ship_up_basis()
         {
-            var f = new Vector3D(0.98, -0.14, -0.14);       // src connector forward
-            var shipUp = new Vector3D(-0.14, -0.99, 0.01);  // cockpit (pilot) Up
+            var f = new Vector3D(0.98, -0.14, -0.14);          // src connector forward
+            var shipRight = new Vector3D(-0.98, 0.14, 0.14);   // pilot Right (TODO: paste real value from next DIAG3 log to anchor SE convention)
+            var shipUp = new Vector3D(-0.14, -0.99, 0.01);     // cockpit (pilot) Up
             var shipFwd = new Vector3D(-0.14, 0.01, -0.99);
 
             Vector3D r, u;
-            DockingProjection.ScreenBasis(f, shipUp, shipFwd, out r, out u);
+            DockingProjection.ScreenBasis(f, shipRight, shipUp, shipFwd, out r, out u);
 
             var fn = Vector3D.Normalize(f);
             Assert.That(Vector3D.Dot(u, fn), Is.EqualTo(0.0).Within(1e-6));
@@ -313,11 +316,12 @@ namespace Mal.DockingAid.Tests.Tests
         public void Ship_up_parallel_to_connector_forward_falls_back_cleanly()
         {
             var f = new Vector3D(0, 1, 0);
+            var shipRight = new Vector3D(1, 0, 0);
             var shipUp = new Vector3D(0, 1, 0);   // parallel to f — unusable
             var shipFwd = new Vector3D(0, 0, 1);
 
             Vector3D r, u;
-            DockingProjection.ScreenBasis(f, shipUp, shipFwd, out r, out u);
+            DockingProjection.ScreenBasis(f, shipRight, shipUp, shipFwd, out r, out u);
 
             Assert.That(Vector3D.Dot(u, Vector3D.Normalize(f)), Is.EqualTo(0.0).Within(1e-6));
             Assert.That(Vector3D.Dot(r, u), Is.EqualTo(0.0).Within(1e-6));

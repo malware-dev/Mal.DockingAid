@@ -88,10 +88,11 @@ namespace Mal.DockingAid
             double setback = ringRadiusM * SetbackMultiplier;
             double depthEff = Math.Max(depth, 0.0) + setback;
 
-            // Lateral placement in the VIEWER (screen) frame, so the ring
-            // sits where the pilot sees the target regardless of how the
-            // connector block was rolled when built. Y inverted because pixel
-            // Y grows down but screenUp grows up.
+            // Lateral placement in the screen frame. The frame already encodes
+            // every per-mount orientation choice (windscreen, rear-view, side,
+            // top, bottom) via the shortest-arc rotation in ScreenBasis, so no
+            // per-bore presentation flip is needed here. Y inverted because
+            // pixel Y grows down but screenUp grows up.
             double sx = Vector3D.Dot(rel, screenRight);
             double sy = Vector3D.Dot(rel, screenUp);
 
@@ -141,42 +142,43 @@ namespace Mal.DockingAid
             return result;
         }
 
-        // Builds the on-glass basis for the connector-bore view. The camera
-        // looks along the SOURCE connector's forward (the mating axis); the
-        // image's "up" is the SHIP's up (the controlling cockpit / reference),
-        // projected into the plane perpendicular to that forward. Result:
-        // independent of the connector's arbitrary build-roll AND of where the
-        // display is mounted — only the pilot's own up enters the picture.
-        // Caller resolves shipUp/shipForward (controlled controller, else a
-        // configured reference, else fallbacks) and feeds the output straight
-        // into <see cref="Project"/>.
+        // Nav-camera basis: screenRight tracks the pilot's +Right axis projected
+        // onto the bore-perp plane, screenUp tracks pilot +Up the same way, with
+        // pilot +Forward kept only as the degenerate-fallback when the bore is
+        // parallel to one of them (side / top / bottom mounts).
         //
-        // shipForward is a secondary reference, used only when shipUp is
-        // (near-)parallel to the connector forward — i.e. docking straight
-        // along the ship's own up axis, where shipUp has no projection.
-        public static void ScreenBasis(Vector3D connectorForward, Vector3D shipUp,
-            Vector3D shipForward, out Vector3D screenRight, out Vector3D screenUp)
+        // pilotRight is taken as INPUT, not derived from pilotUp × pilotFwd.
+        // SE's handedness was a constant source of off-by-a-sign bugs because
+        // both the test fixtures and this routine were deriving Right with the
+        // same wrong cross-product order, agreeing with each other but flipping
+        // the lateral axis in-game. Now we just trust pilot.WorldMatrix.Right —
+        // whatever SE says is right IS right, by definition.
+        public static void ScreenBasis(Vector3D connectorForward,
+            Vector3D pilotRight, Vector3D pilotUp, Vector3D pilotForward,
+            out Vector3D screenRight, out Vector3D screenUp)
         {
             var f = SafeNormalize(connectorForward, new Vector3D(0, 0, 1));
+            var pR = SafeNormalize(pilotRight, new Vector3D(1, 0, 0));
+            var pU = SafeNormalize(pilotUp, new Vector3D(0, 1, 0));
+            var pF = SafeNormalize(pilotForward, new Vector3D(0, 0, -1));
 
-            var u = shipUp - Vector3D.Dot(shipUp, f) * f;
-            if (u.LengthSquared() < 1e-9)
-            {
-                // shipUp ∥ connector forward — fall back to ship forward.
-                u = shipForward - Vector3D.Dot(shipForward, f) * f;
-                if (u.LengthSquared() < 1e-9)
-                {
-                    // Both refs ∥ f (pathological): any stable perpendicular.
-                    var seed = Math.Abs(f.Z) < 0.9 ? new Vector3D(0, 0, 1) : new Vector3D(1, 0, 0);
-                    u = seed - Vector3D.Dot(seed, f) * f;
-                }
-            }
+            // screenRight = pilotRight ⊥ bore, with pilotForward fallback when
+            // bore ≈ ±pilotRight (the projection vanishes).
+            var r = pR - Vector3D.Dot(pR, f) * f;
+            if (r.LengthSquared() < 0.01)
+                r = pF - Vector3D.Dot(pF, f) * f;
+            screenRight = Vector3D.Normalize(r);
+
+            // screenUp = pilotUp ⊥ bore, with pilotForward fallback when
+            // bore ≈ ±pilotUp.
+            var u = pU - Vector3D.Dot(pU, f) * f;
+            if (u.LengthSquared() < 0.01)
+                u = pF - Vector3D.Dot(pF, f) * f;
+
+            // Gram-Schmidt: keep screenUp perpendicular to screenRight in case
+            // an oblique bore left them non-orthogonal.
+            u -= Vector3D.Dot(u, screenRight) * screenRight;
             screenUp = Vector3D.Normalize(u);
-            // Observer behind the source connector looking ALONG +f toward the
-            // target, with screenUp as up: a NON-mirrored view ⇒ right =
-            // f × up (the cross(up, f) order is the mirror image — that was
-            // the long-standing horizontal bug, confirmed in-game).
-            screenRight = Vector3D.Normalize(Vector3D.Cross(f, screenUp));
         }
 
         static Vector3D SafeNormalize(Vector3D v, Vector3D fallback)

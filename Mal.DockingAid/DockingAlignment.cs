@@ -80,22 +80,32 @@ namespace Mal.DockingAid
             var fwdAngleDeg = Math.Acos(MathHelper.Clamp(fwdDot, -1.0, 1.0)) * (180.0 / Math.PI);
             var alignmentDeg = 180.0 - fwdAngleDeg;
 
-            // Signed roll error: angle of target.Up relative to source.Up
-            // around source.Forward. Sign flipped so the chevron sweeps in
-            // the "fly to needle" direction.
-            var tgtUpRight = Vector3D.Dot(tgtMtx.Up, srcMtx.Right);
-            var tgtUpUp = Vector3D.Dot(tgtMtx.Up, srcMtx.Up);
-            var rawRoll = -Math.Atan2(tgtUpRight, tgtUpUp);
+            // Signed roll error: angle of target.Up around the bore, measured
+            // against the SCREEN frame (screenUp/screenRight) — the same
+            // pilot-referenced basis as the ring and cross. Using the source
+            // connector's own Up/Right here (its arbitrary build-roll) is what
+            // made a rear-mounted connector fabricate a phantom 90° demand.
+            //
+            // Sign convention: +rollRadians ⇒ chevron right of top ⇒ pilot
+            // rolls right. Earlier this had a leading "-" that compensated for
+            // a sign bug in ScreenBasis (the derived pilotRight was negated);
+            // both were fixed together. Adding it back would just re-introduce
+            // the backwards cue.
+            var tgtUpRight = Vector3D.Dot(tgtMtx.Up, screenRight);
+            var tgtUpUp = Vector3D.Dot(tgtMtx.Up, screenUp);
+            var rawRoll = Math.Atan2(tgtUpRight, tgtUpUp);
 
-            // SE connectors lock at ANY roll, and a connector mounted 180° apart
-            // presents an identical, equally-connectable face — depending on how
-            // each connector is built, a mate-aligned pair can sit Up-to-Up
-            // (raw roll ~0) or Up-to-anti-Up (raw roll ~±180°). Treating the
-            // latter as a real error makes the aid demand a pointless flip.
-            // Fold the error by π so it's always the shortest turn to a
-            // connectable orientation: never more than a quarter-turn, never
-            // upside-down.
-            var rollRadians = rawRoll - Math.PI * Math.Round(rawRoll / Math.PI);
+            // SE connectors lock at ANY roll, and the target's Up axis is a
+            // build-time choice the modder made on a 90°-symmetric mating face.
+            // There's no canonical "up" for an arbitrary target in space, so
+            // any of the 4 cardinal orientations (target up matches screen up,
+            // right, down, or left) is equally docked. Fold the raw roll by
+            // π/2 so the cue always shows the shortest turn to the nearest
+            // cardinal — cap is ±45°, no fabricated 90° demand on a connector
+            // someone built rolled, no demanded 180° flip on a "wrong way up"
+            // mount.
+            const double Quarter = Math.PI / 2.0;
+            var rollRadians = rawRoll - Quarter * Math.Round(rawRoll / Quarter);
 
             return new AlignmentData
             {

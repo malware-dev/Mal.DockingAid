@@ -47,11 +47,6 @@ namespace Mal.DockingAid
 
         readonly ClosureTracker _closure = new ClosureTracker();
 
-        // TEMP diagnostic throttle — PER INSTANCE (not static: each text
-        // surface throttles independently, otherwise one surface starves the
-        // others and we sample the wrong one). Removed once resolved.
-        int _lastDiagFrame = -100000;
-
         DockingAidPalette _palette = DockingAidPalette.Default;
         Color _lastForeground;
         Color _lastBackground;
@@ -207,47 +202,21 @@ namespace Mal.DockingAid
                 // of a silently wrong frame. (Cross still uses the host matrix
                 // for now — ring correctness first; cross consistency is the
                 // next step once this is confirmed in-game.)
-                var host = ((VRage.ModAPI.IMyEntity)Block).WorldMatrix;
                 var srcMtx = src.WorldMatrix;
                 var pilot = ResolvePilotController(src);
 
-                int diagFrame = MyAPIGateway.Session.GameplayFrameCounter;
-                bool diagDue =
-                    (((src.CustomName ?? "").IndexOf("THIS ONE", System.StringComparison.OrdinalIgnoreCase) >= 0) ||
-                     ((tgt.CustomName ?? "").IndexOf("THIS ONE", System.StringComparison.OrdinalIgnoreCase) >= 0))
-                    && diagFrame - _lastDiagFrame >= 120;
-
                 if (pilot == null)
                 {
-                    if (diagDue)
-                    {
-                        _lastDiagFrame = diagFrame;
-                        MyLog.Default.WriteLineAndConsole(
-                            "[Mal.DockingAid][DIAG] no pilot controlling src construct ('" +
-                            (src.CustomName ?? "") + "') — orientation unavailable");
-                        LogConstructControllers(src, null);
-                    }
                     DrawNoOrientationRef(frame, layout, src, tgt);
                     return;
                 }
 
                 var pilotMtx = pilot.WorldMatrix;
                 Vector3D screenRight, screenUp;
-                DockingProjection.ScreenBasis(srcMtx.Forward, pilotMtx.Up, pilotMtx.Forward,
+                DockingProjection.ScreenBasis(srcMtx.Forward,
+                    pilotMtx.Right, pilotMtx.Up, pilotMtx.Forward,
                     out screenRight, out screenUp);
                 var alignment = DockingAlignment.Compute(src, tgt, screenRight, screenUp);
-
-                if (diagDue)
-                {
-                    _lastDiagFrame = diagFrame;
-                    LogDiag(Block, host, screenRight, screenUp, src, tgt, alignment);
-                    MyLog.Default.WriteLineAndConsole(
-                        "[Mal.DockingAid][DIAG3] pilot='" + (pilot.CustomName ?? "") +
-                        "' pilotUp=" + V(pilotMtx.Up) + " pilotFwd=" + V(pilotMtx.Forward) +
-                        " srcFwd=" + V(srcMtx.Forward) +
-                        " => sR=" + V(screenRight) + " sU=" + V(screenUp));
-                    LogConstructControllers(src, pilot);
-                }
 
                 var closure = _closure.Update(
                     tgt.EntityId, alignment.Range, MyAPIGateway.Session.GameplayFrameCounter);
@@ -271,102 +240,6 @@ namespace Mal.DockingAid
                 if (isReady)
                     DrawCenteredBigText(frame, layout, "READY", _palette.Accent);
             }
-        }
-
-        // TEMP diagnostic: dumps the real host/connector frames, the derived
-        // screen frame, and the projected lateral/roll terms for the tracked
-        // pair (throttled ~2 s). Lets us read the actual cockpit surface
-        // numbers from the SE log instead of guessing the convention. Removed
-        // once the frame derivation is fixed from this data.
-        static void LogDiag(IMyCubeBlock block, MatrixD host,
-            Vector3D sR, Vector3D sU, IMyShipConnector src, IMyShipConnector tgt,
-            AlignmentData a)
-        {
-            try
-            {
-                var sM = src.WorldMatrix;
-                var tM = tgt.WorldMatrix;
-                var rel = ConnectorGeometry.MatingPosition(tgt) - ConnectorGeometry.MatingPosition(src);
-                double depth = Vector3D.Dot(rel, sM.Forward);
-                double sx = Vector3D.Dot(rel, sR);
-                double sy = Vector3D.Dot(rel, sU);
-                double tUR = Vector3D.Dot(tM.Up, sM.Right);
-                double tUU = Vector3D.Dot(tM.Up, sM.Up);
-                MyLog.Default.WriteLineAndConsole(
-                    "[Mal.DockingAid][DIAG] host=" + block.GetType().Name +
-                    " | hF=" + V(host.Forward) + " hR=" + V(host.Right) + " hU=" + V(host.Up) +
-                    " | sR=" + V(sR) + " sU=" + V(sU) +
-                    " | srcF=" + V(sM.Forward) + " srcR=" + V(sM.Right) + " srcU=" + V(sM.Up) +
-                    " | tgtF=" + V(tM.Forward) + " tgtU=" + V(tM.Up) +
-                    " | rel=" + V(rel) + " depth=" + depth.ToString("F2") +
-                    " sx=" + sx.ToString("F3") + " sy=" + sy.ToString("F3") +
-                    " | tUR=" + tUR.ToString("F3") + " tUU=" + tUU.ToString("F3") +
-                    " roll=" + a.RollRadians.ToString("F3"));
-
-                // Identity + physics: proves whether the tracked src/tgt are
-                // on the grids we expect, and whether src's grid is actually
-                // rotating while the player rolls. A frozen src world-matrix
-                // during a real roll => the aid is locked to a connector that
-                // isn't on the maneuvering ship (not a roll-math bug).
-                string srcGn = "?"; long srcGid = 0;
-                VRageMath.Vector3 srcAng = VRageMath.Vector3.Zero;
-                VRageMath.Vector3 srcLin = VRageMath.Vector3.Zero;
-                string tgtGn = "?"; long tgtGid = 0;
-                string lcdGn = "?"; long lcdGid = 0;
-                try
-                {
-                    var sg = src.CubeGrid;
-                    if (sg != null) srcGn = sg.CustomName;
-                    var sge = sg as VRage.ModAPI.IMyEntity;
-                    if (sge != null)
-                    {
-                        srcGid = sge.EntityId;
-                        if (sge.Physics != null)
-                        {
-                            srcAng = sge.Physics.AngularVelocity;
-                            srcLin = sge.Physics.LinearVelocity;
-                        }
-                    }
-                }
-                catch { }
-                try
-                {
-                    var tg = tgt.CubeGrid;
-                    if (tg != null) tgtGn = tg.CustomName;
-                    var tge = tg as VRage.ModAPI.IMyEntity;
-                    if (tge != null) tgtGid = tge.EntityId;
-                }
-                catch { }
-                try
-                {
-                    var lgn = block.CubeGrid as VRage.Game.ModAPI.IMyCubeGrid;
-                    if (lgn != null) lcdGn = lgn.CustomName;
-                    var lge = block.CubeGrid as VRage.ModAPI.IMyEntity;
-                    if (lge != null) lcdGid = lge.EntityId;
-                }
-                catch { }
-                MyLog.Default.WriteLineAndConsole(
-                    "[Mal.DockingAid][DIAG2] src='" + (src.CustomName ?? "") + "'#" + src.EntityId +
-                    " srcGrid='" + srcGn + "'#" + srcGid +
-                    " srcAngVel=" + V(srcAng) + " srcLinVel=" + V(srcLin) +
-                    " | tgt='" + (tgt.CustomName ?? "") + "'#" + tgt.EntityId +
-                    " tgtGrid='" + tgtGn + "'#" + tgtGid +
-                    " | lcdGrid='" + lcdGn + "'#" + lcdGid);
-            }
-            catch (Exception e)
-            {
-                MyLog.Default.WriteLineAndConsole("[Mal.DockingAid][DIAG] error " + e.Message);
-            }
-        }
-
-        static string V(Vector3D v)
-        {
-            return v.X.ToString("F2") + "," + v.Y.ToString("F2") + "," + v.Z.ToString("F2");
-        }
-
-        static string V(VRageMath.Vector3 v)
-        {
-            return v.X.ToString("F2") + "," + v.Y.ToString("F2") + "," + v.Z.ToString("F2");
         }
 
         // Single seam for the "leaving Tracking" reset: the closure smoother
@@ -447,48 +320,6 @@ namespace Mal.DockingAid
             var sg = src.CubeGrid;
             if (cg == null || sg == null || !cg.IsSameConstructAs(sg)) return null;
             return cockpit;
-        }
-
-        // TEMP diagnostic: dumps every ship controller on the source
-        // construct with the SE flags that actually disambiguate "who is
-        // commanding the ship" (IsUnderControl) vs. our current local-seat
-        // pick. Reveals SE's real behaviour with multiple seated players so
-        // the resolution rule comes from data, not assumption. Removed once
-        // the rule is settled.
-        static void LogConstructControllers(IMyShipConnector src,
-            Sandbox.ModAPI.IMyShipController picked)
-        {
-            try
-            {
-                var grid = src.CubeGrid;
-                if (grid == null) return;
-                var grids = new System.Collections.Generic.List<VRage.Game.ModAPI.IMyCubeGrid>();
-                var group = grid.GetGridGroup(VRage.Game.ModAPI.GridLinkTypeEnum.Mechanical);
-                if (group != null) group.GetGrids(grids); else grids.Add(grid);
-
-                var blocks = new System.Collections.Generic.List<VRage.Game.ModAPI.IMySlimBlock>();
-                for (int gi = 0; gi < grids.Count; gi++)
-                {
-                    blocks.Clear();
-                    grids[gi].GetBlocks(blocks, b => b.FatBlock is Sandbox.ModAPI.IMyShipController);
-                    for (int bi = 0; bi < blocks.Count; bi++)
-                    {
-                        var c = blocks[bi].FatBlock as Sandbox.ModAPI.IMyShipController;
-                        if (c == null) continue;
-                        MyLog.Default.WriteLineAndConsole(
-                            "[Mal.DockingAid][DIAGC] '" + (c.CustomName ?? "") +
-                            "' grid='" + (c.CubeGrid != null ? c.CubeGrid.CustomName : "?") +
-                            "' underControl=" + c.IsUnderControl +
-                            " canControl=" + c.CanControlShip +
-                            " main=" + c.IsMainCockpit +
-                            (object.ReferenceEquals(c, picked) ? "  <== PICKED(local-seat)" : ""));
-                    }
-                }
-            }
-            catch (System.Exception e)
-            {
-                MyLog.Default.WriteLineAndConsole("[Mal.DockingAid][DIAGC] error " + e.Message);
-            }
         }
 
         // Nobody on this client is piloting the source construct, so "up" is
@@ -589,8 +420,9 @@ namespace Mal.DockingAid
 
             // Yaw notch — pair of AH_BoreSight chevrons flanking the horizontal
             // rail (v above, ^ below), tips pointing at the rail at the yaw
-            // position.
-            float notchX = layout.Center.X + (float)(a.YawComponent * layout.ReticleRadius);
+            // position. The screen frame already encodes per-mount orientation,
+            // so no per-mount mirror is applied here.
+            float notchX = layout.Center.X + (float)a.YawComponent * layout.ReticleRadius;
             notchX = MathHelper.Clamp(notchX,
                 layout.Center.X - layout.ReticleRadius,
                 layout.Center.X + layout.ReticleRadius);
