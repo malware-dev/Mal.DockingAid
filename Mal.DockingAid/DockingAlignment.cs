@@ -5,34 +5,36 @@ using IMyShipConnector = Sandbox.ModAPI.IMyShipConnector;
 namespace Mal.DockingAid
 {
     /// <summary>
-    ///     Frame-mixed alignment readouts for the LCD app. Lateral and notch
-    ///     components are projected into the LCD's frame so they line up with
-    ///     the player's pitch/yaw inputs regardless of how the source connector
-    ///     is mounted; range/roll/alignment are intrinsic.
+    ///     Alignment readouts in the PILOT INPUT frame. The three Input* fields
+    ///     are axis-angle scalars: each says how much input on the matching
+    ///     control stick will null the docking error. For a forward-mounted
+    ///     connector InputPitch/Yaw/Roll collapse to the same bore-frame
+    ///     pitch/yaw/roll values you'd expect; for non-axial mounts they
+    ///     permute automatically so the chevron the pilot sees always maps to
+    ///     the stick they need to push.
     /// </summary>
     public struct AlignmentData
     {
         public double Range;
         public double LateralLength;
-        public double LateralXLcd;       // metres along screen-right (unused by renderer; kept for tests)
-        public double LateralYLcd;       // metres along screen-up   (unused by renderer; kept for tests)
-        public double PitchComponent;    // notch displacement, screen-up axis, sin-like [-1, 1]
-        public double YawComponent;      // notch displacement, screen-right axis, sin-like [-1, 1]
+        public double InputPitch;        // ship pitch input needed (radians; axis-angle)
+        public double InputYaw;          // ship yaw input needed
+        public double InputRoll;         // ship roll input needed
+        public double MatingRoll;        // mating roll about bore, post-fold, for the status threshold
         public double AlignmentDeg;      // 0 = perfectly anti-parallel forwards
-        public double RollRadians;       // signed roll error around source.Forward
     }
 
     /// <summary>
-    ///     Pure docking math. Inputs: source/target connectors and the
-    ///     viewer screen basis (screenRight, screenUp) — the SAME basis the
-    ///     ring is projected in (see <see cref="DockingProjection.ScreenBasis"/>),
-    ///     so the pitch/yaw notch and the target ring share one frame and
-    ///     can't disagree. No SE-API calls beyond the connector world matrices.
+    ///     Pure docking math. Inputs: source/target connectors and the pilot's
+    ///     own (right, up, forward) axes — the same triple the ScreenBasis
+    ///     consumes. The three Input* outputs are decomposed in this pilot
+    ///     frame, so each maps to one stick on the controller regardless of
+    ///     how the source connector is mounted.
     /// </summary>
     public static class DockingAlignment
     {
-        // Alignment thresholds — all three (lateral / forwards / roll) must be
-        // inside the band to qualify for that status colour.
+        // Alignment thresholds — all three (lateral / forwards / mating-roll)
+        // must be inside the band to qualify for that status colour.
         const double GoodLateralMetres = 0.3;
         const double GoodAlignDeg = 5.0;
         const double GoodRollDeg = 10.0;
@@ -41,7 +43,7 @@ namespace Mal.DockingAid
         const double WarnRollDeg = 30.0;
 
         public static AlignmentData Compute(IMyShipConnector src, IMyShipConnector tgt,
-            Vector3D screenRight, Vector3D screenUp)
+            Vector3D pilotRight, Vector3D pilotUp, Vector3D pilotForward)
         {
             var srcMate = ConnectorGeometry.MatingPosition(src);
             var tgtMate = ConnectorGeometry.MatingPosition(tgt);
@@ -51,78 +53,80 @@ namespace Mal.DockingAid
 
             var srcMtx = src.WorldMatrix;
             var tgtMtx = tgt.WorldMatrix;
+            var bore = srcMtx.Forward;
 
-            // Target's lateral position relative to the source, in the screen
-            // frame. Not drawn by the renderer (the ring sprite carries this);
-            // kept because tests pin it and it's a cheap, useful readout.
+            // Target's lateral offset perpendicular to its bore — drives the
+            // status thresholds.
             var deltaAlongTgtFwd = Vector3D.Dot(delta, tgtMtx.Forward);
             var targetLateralFromSrc = delta - deltaAlongTgtFwd * tgtMtx.Forward;
 
-            var lateralXLcd = Vector3D.Dot(targetLateralFromSrc, screenRight);
-            var lateralYLcd = Vector3D.Dot(targetLateralFromSrc, screenUp);
-
-            // Pitch / yaw notch: which way the connector's nose must swing to
-            // mate. It must point at -target.Forward; the in-plane direction
-            // from the current bore toward that goal (component of -tgt.Forward
-            // perpendicular to src.Forward) is exactly "where to aim the nose".
-            // Projected onto the SAME screen basis as the ring and fed through
-            // the SAME renderer mapping (notchY = c - pitch, notchX = c + yaw),
-            // so the notch is a fly-to-needle that agrees with the ring by
-            // construction — no independent sign convention to drift.
-            var srcFwd = srcMtx.Forward;
-            var antiTarget = -tgtMtx.Forward;
-            var noseError = antiTarget - Vector3D.Dot(antiTarget, srcFwd) * srcFwd;
-            var pitchComponent = Vector3D.Dot(noseError, screenUp);
-            var yawComponent = Vector3D.Dot(noseError, screenRight);
-
-            // Forwards alignment: -1 dot is perfectly anti-parallel = mating-aligned.
-            var fwdDot = Vector3D.Dot(srcMtx.Forward, tgtMtx.Forward);
+            // Forwards alignment: −1 dot ⇒ perfectly anti-parallel = mating-aligned.
+            var fwdDot = Vector3D.Dot(bore, tgtMtx.Forward);
             var fwdAngleDeg = Math.Acos(MathHelper.Clamp(fwdDot, -1.0, 1.0)) * (180.0 / Math.PI);
             var alignmentDeg = 180.0 - fwdAngleDeg;
 
-            // Signed roll error: angle of target.Up around the bore, measured
-            // against the SCREEN frame (screenUp/screenRight) — the same
-            // pilot-referenced basis as the ring and cross. Using the source
-            // connector's own Up/Right here (its arbitrary build-roll) is what
-            // made a rear-mounted connector fabricate a phantom 90° demand.
-            //
-            // Sign convention: +rollRadians ⇒ chevron right of top ⇒ pilot
-            // rolls right. Earlier this had a leading "-" that compensated for
-            // a sign bug in ScreenBasis (the derived pilotRight was negated);
-            // both were fixed together. Adding it back would just re-introduce
-            // the backwards cue.
+            // Screen basis (bore-perpendicular pilot frame) — used only to
+            // measure mating roll. Shared with DockingProjection.Project so the
+            // "zero roll" reference is the same axis the target ring sits on.
+            Vector3D screenRight, screenUp;
+            DockingProjection.ScreenBasis(bore, pilotRight, pilotUp, pilotForward,
+                out screenRight, out screenUp);
+
+            // Mating roll: angle of target.Up around the bore, folded by π/2
+            // (4 cardinal mounts all count as docked). Cap ±45°.
             var tgtUpRight = Vector3D.Dot(tgtMtx.Up, screenRight);
             var tgtUpUp = Vector3D.Dot(tgtMtx.Up, screenUp);
             var rawRoll = Math.Atan2(tgtUpRight, tgtUpUp);
-
-            // SE connectors lock at ANY roll, and the target's Up axis is a
-            // build-time choice the modder made on a 90°-symmetric mating face.
-            // There's no canonical "up" for an arbitrary target in space, so
-            // any of the 4 cardinal orientations (target up matches screen up,
-            // right, down, or left) is equally docked. Fold the raw roll by
-            // π/2 so the cue always shows the shortest turn to the nearest
-            // cardinal — cap is ±45°, no fabricated 90° demand on a connector
-            // someone built rolled, no demanded 180° flip on a "wrong way up"
-            // mount.
             const double Quarter = Math.PI / 2.0;
-            var rollRadians = rawRoll - Quarter * Math.Round(rawRoll / Quarter);
+            var matingRoll = rawRoll - Quarter * Math.Round(rawRoll / Quarter);
+
+            // Nose-error: where the bore needs to swing to point at the target
+            // (component of −tgt.Forward perpendicular to bore).
+            var antiTarget = -tgtMtx.Forward;
+            var noseError = antiTarget - Vector3D.Dot(antiTarget, bore) * bore;
+
+            // Small-angle axis-angle representation of the required correction:
+            //   R_err ≈ (bore × noseError) + matingRoll · (screenUp × screenRight)
+            // The first term tilts the bore toward the target. The second
+            // rotates the connector about the bore-aligned screen-frame third
+            // axis to align target Up with screen up — `screenUp × screenRight`
+            // equals +bore on every mount EXCEPT aft (where lateral-preserved
+            // gives a left-handed screen frame), so `matingRoll · bore` would
+            // get the rotation sign wrong on aft. Decomposed in pilot frame
+            // with the stick-convention adjustments below, each component is
+            // the input on the matching stick that nulls the error.
+            var rollAxis = Vector3D.Cross(screenUp, screenRight);
+            var rErr = Vector3D.Cross(bore, noseError) + matingRoll * rollAxis;
+
+            // Pilot stick conventions:
+            //   +pitch stick = nose up      = +rotation about +pilotRight
+            //   +yaw stick   = nose right   = −rotation about +pilotUp
+            //   +roll stick  = right wing dn = +rotation about +pilotForward
+            // The yaw axis convention disagrees with the right-hand rule sign,
+            // so we decompose against −pilotUp to keep "+input value = +stick
+            // direction = chevron on the +side" consistent with the other two.
+            var inputPitch = Vector3D.Dot(rErr, pilotRight);
+            var inputYaw = -Vector3D.Dot(rErr, pilotUp);
+            var inputRoll = Vector3D.Dot(rErr, pilotForward);
 
             return new AlignmentData
             {
                 Range = range,
                 LateralLength = targetLateralFromSrc.Length(),
-                LateralXLcd = lateralXLcd,
-                LateralYLcd = lateralYLcd,
-                PitchComponent = pitchComponent,
-                YawComponent = yawComponent,
+                InputPitch = inputPitch,
+                InputYaw = inputYaw,
+                InputRoll = inputRoll,
+                MatingRoll = matingRoll,
                 AlignmentDeg = alignmentDeg,
-                RollRadians = rollRadians,
             };
         }
 
         public static Color ColorFor(AlignmentData a, DockingAidPalette palette)
         {
-            double absRollDeg = Math.Abs(a.RollRadians) * (180.0 / Math.PI);
+            // Status uses geometric mating-roll, not InputRoll: InputRoll mixes
+            // bore-tilt and mating-roll contributions, and bore tilt is already
+            // covered by AlignmentDeg.
+            double absRollDeg = Math.Abs(a.MatingRoll) * (180.0 / Math.PI);
             if (a.LateralLength <= GoodLateralMetres
                 && a.AlignmentDeg <= GoodAlignDeg
                 && absRollDeg <= GoodRollDeg)

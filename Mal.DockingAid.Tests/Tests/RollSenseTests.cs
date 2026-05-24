@@ -2,45 +2,29 @@ using System;
 using Mal.DockingAid.Tests.TestUtilities;
 using NUnit.Framework;
 using VRageMath;
-using IMyShipConnector = Sandbox.ModAPI.IMyShipConnector;
 
 namespace Mal.DockingAid.Tests.Tests
 {
     /// <summary>
-    ///     Spec for the roll cue after the proper-frame fix.
-    ///
-    ///     The roll cue is CHIRAL. Before the fix the seam negated screenRight
-    ///     alone — a det -1 reflection — so the same physical roll swept the
-    ///     chevron OPPOSITE ways on a side vs an aft mount (proven here
-    ///     previously). Now <see cref="DockingProjection.ScreenBasis"/> always
-    ///     returns a proper (det +1) frame and the rear-view is a render-only
-    ///     mirrorX that <see cref="DockingAlignment.Compute"/> never sees. So
-    ///     the roll cue MUST be mount-independent: identical physical roll ⇒
-    ///     identical chevron sweep on side AND aft.
-    ///
-    ///     Exact frames from the shared-grid insight: Pequod 90° (connector
-    ///     left), Jackdaw 180° (connector aft). We inject a known physical
-    ///     roll about the bore, run the real ScreenBasis + Compute + the real
-    ///     chevron mapping (dirX = sin(roll); +angle = clockwise on screen).
-    ///
-    ///     Scope note: this pins mount-CONSISTENCY and monotonicity. The
-    ///     single absolute "fly-to-needle" sign (Fault 2 — whether the whole
-    ///     cue is globally backwards) is a UX direction the harness cannot
-    ///     judge; it is the one remaining in-game check, and because the cue
-    ///     is now mount-consistent, one ship settles it for all mounts.
+    ///     Pins the input-centric chevron semantics: mating roll on a side
+    ///     mount goes to the PITCH input axis, mating roll on an aft mount
+    ///     goes to the ROLL input axis (with sign flipped vs forward), and the
+    ///     same "rotate the cockpit about the bore" physical correction shrinks
+    ///     the displayed error on every mount — even though it corresponds to
+    ///     different sticks per mount.
     /// </summary>
     [TestFixture]
     public class RollSenseTests
     {
-        // Cockpit frame matching SE's convention (Forward = -Z, Up = +Y,
-        // Right = +X). Right is supplied explicitly — no derivation, no
-        // handedness guess.
+        // SE-standard pilot frame.
         static readonly Vector3D PilotFwd = new Vector3D(0, 0, -1);
         static readonly Vector3D PilotUp = new Vector3D(0, 1, 0);
         static readonly Vector3D PilotRight = new Vector3D(1, 0, 0);
 
-        static Vector3D PequodBore { get { return -PilotRight; } }  // left, 90°
-        static Vector3D JackdawBore { get { return -PilotFwd; } }   // aft, 180°
+        // Pequod: side connector pointing to ship's left (bore = −pilotRight).
+        // Jackdaw: aft connector pointing backward (bore = −pilotFwd = +Z).
+        static Vector3D PequodBore { get { return -PilotRight; } }
+        static Vector3D JackdawBore { get { return -PilotFwd; } }
 
         // Rodrigues rotation of v about a unit axis by angle (right-handed).
         static Vector3D Rot(Vector3D v, Vector3D axis, double angle)
@@ -52,13 +36,15 @@ namespace Mal.DockingAid.Tests.Tests
                  + k * (Vector3D.Dot(k, v) * (1.0 - c));
         }
 
-        // Real pipeline: shipped ScreenBasis (always proper now) + real
-        // Compute. Returns RollRadians and the chevron's screen dirX.
-        static double RollCue(Vector3D bore, double injectedRoll, out double chevronDirX)
+        // Build a scenario: source connector pointed along bore, target
+        // anti-parallel and N metres ahead, target's mating-up rotated by
+        // `injectedRoll` about the bore from the "natural" screen up.
+        static AlignmentData Setup(Vector3D bore, double injectedRoll,
+            Vector3D pilotRight, Vector3D pilotUp, Vector3D pilotFwd)
         {
             var boreN = Vector3D.Normalize(bore);
             Vector3D screenRight, screenUp;
-            DockingProjection.ScreenBasis(boreN, PilotRight, PilotUp, PilotFwd,
+            DockingProjection.ScreenBasis(boreN, pilotRight, pilotUp, pilotFwd,
                 out screenRight, out screenUp);
 
             // Arbitrary build-roll on the source (must not matter).
@@ -71,109 +57,62 @@ namespace Mal.DockingAid.Tests.Tests
             var srcMate = ConnectorGeometry.MatingPosition(src);
             var tgt = FakeConnector.At(srcMate + boreN * 31.25, -boreN, tgtUp);
 
-            // mirrorX is deliberately NOT passed to Compute — proving the
-            // roll cue cannot depend on the rear-view presentation flip.
-            var a = DockingAlignment.Compute(src, tgt, screenRight, screenUp);
-            chevronDirX = Math.Sin(a.RollRadians); // >0 ⇒ CW/right, <0 ⇒ CCW/left
-            return a.RollRadians;
+            return DockingAlignment.Compute(src, tgt, pilotRight, pilotUp, pilotFwd);
         }
 
-        static string Sweep(double dirX)
+        static double ErrorMagnitude(AlignmentData a)
         {
-            if (Math.Abs(dirX) < 1e-4) return "TOP   ";
-            return dirX > 0 ? "CW/RGT" : "CCW/LFT";
+            return Math.Sqrt(a.InputPitch * a.InputPitch
+                + a.InputYaw * a.InputYaw
+                + a.InputRoll * a.InputRoll);
         }
 
-        // ── 1. Living documentation: same physical roll, both exact mounts. ─
+        // Side mount: mating-roll error must go to the PITCH input axis
+        // (rotating about the bore = rotating about pilot.right = ship pitch).
+        // Roll input axis stays at 0.
         [Test]
-        public void Print_roll_cue_sweep_for_both_exact_mounts()
+        public void Side_mount_mating_roll_goes_to_pitch_input_not_roll_input()
         {
-            TestContext.Out.WriteLine(
-                "injected roll = target rolled +θ about +bore (right-handed); "
-                + "shipped ScreenBasis (always proper) + real Compute");
-            foreach (var th in new[] { -0.5, -0.2, 0.2, 0.5 })
+            foreach (var th in new[] { -0.4, -0.15, 0.15, 0.4 })
             {
-                double pdx, jdx;
-                double pr = RollCue(PequodBore, th, out pdx);
-                double jr = RollCue(JackdawBore, th, out jdx);
-                TestContext.Out.WriteLine(
-                    "  θ=" + th.ToString("+0.0;-0.0") +
-                    " | Pequod(90° side) roll=" + pr.ToString("+0.000;-0.000") +
-                    " chevron " + Sweep(pdx) +
-                    "   | Jackdaw(180° aft) roll=" + jr.ToString("+0.000;-0.000") +
-                    " chevron " + Sweep(jdx));
-            }
-            Assert.Pass();
-        }
+                var a = Setup(PequodBore, th, PilotRight, PilotUp, PilotFwd);
 
-        // ── 2. THE fix, pinned: roll cue is CONTROL-mapped. Side and aft
-        //       mounts use different pilot sticks (PITCH vs ROLL) and the
-        //       SAME stick has OPPOSITE physical effect on opposite-handed
-        //       mounts. The new screen-basis rule (lateral preserved, frame
-        //       chirality flips between antipode pairs) makes the chevron
-        //       sign flip with it — so the SAME stick direction nulls the
-        //       SAME chevron direction across all mounts. The downstream
-        //       observable: a given physical roll produces OPPOSITE chevron
-        //       sweeps on side vs aft. The earlier "same chevron everywhere"
-        //       invariant was bore-frame-consistent but control-MISMATCHED;
-        //       it was the root of the Pequod-backwards report. ────────────
-        [Test]
-        public void Roll_cue_is_control_mapped_side_opposite_aft()
-        {
-            foreach (var th in new[] { -0.5, -0.2, 0.2, 0.5 })
-            {
-                double pdx, jdx;
-                RollCue(PequodBore, th, out pdx);
-                RollCue(JackdawBore, th, out jdx);
-                Assert.That(Math.Sign(pdx), Is.Not.EqualTo(Math.Sign(jdx)),
-                    "same physical roll must sweep the chevron OPPOSITE ways "
-                    + "on side vs aft (control-mapped, θ=" + th + ")");
+                Assert.That(Math.Abs(a.InputRoll), Is.LessThan(1e-9),
+                    "side mount: ship roll has no effect on mating roll; InputRoll = 0 (θ=" + th + ")");
+                Assert.That(Math.Abs(a.InputPitch), Is.EqualTo(Math.Abs(th)).Within(1e-6),
+                    "side mount: mating roll maps to pitch input magnitude (θ=" + th + ")");
             }
         }
 
-        // Closed-loop fly-to-needle: inject connector-roll error ρ about the
-        // bore, then apply the ship rotation that PHYSICALLY reduces it
-        // (rotate the cockpit + source about the bore by +ρ·step). A correct
-        // cue must shrink the chevron deflection toward 0. If chasing the
-        // physically-correct direction GROWS the chevron, the cue is backwards.
-        // No sign convention is assumed — only "does correcting reduce it".
-        static double ChevronMagAfterCorrection(Vector3D bore, double rho, double frac)
+        // Aft mount: mating-roll error goes to the ROLL input axis. Stick
+        // direction matches what the pilot sees on the screen (matingRoll's
+        // screen-frame Atan2 sign), regardless of bore direction — the roll
+        // rotation axis is `screenUp × screenRight`, not bore, so aft and
+        // forward both report the same chevron direction for a given visible
+        // tilt. Injected θ rotates target.up about +bore (= −pilotForward on
+        // aft), which puts target.up at screen-frame matingRoll = −θ, so the
+        // resulting InputRoll = −θ.
+        [Test]
+        public void Aft_mount_mating_roll_goes_to_roll_input_screen_frame_sign()
         {
-            var boreN = Vector3D.Normalize(bore);
+            foreach (var th in new[] { -0.4, -0.15, 0.15, 0.4 })
+            {
+                var a = Setup(JackdawBore, th, PilotRight, PilotUp, PilotFwd);
 
-            // Cockpit rotated about the bore by the physically-correct
-            // counter-rotation (+rho*frac reduces a +rho error).
-            double dShip = rho * frac;
-            var pRight = Rot(PilotRight, boreN, dShip);
-            var pUp = Rot(PilotUp, boreN, dShip);
-            var pFwd = Rot(PilotFwd, boreN, dShip);
-
-            Vector3D sR, sU;
-            DockingProjection.ScreenBasis(boreN, pRight, pUp, pFwd, out sR, out sU);
-
-            // Source rolls with the ship; target is world-fixed at error rho.
-            var buildUp = Rot(Math.Abs(boreN.Z) < 0.9
-                ? Vector3D.Normalize(Vector3D.Cross(boreN, new Vector3D(0, 0, 1)))
-                : Vector3D.Normalize(Vector3D.Cross(boreN, new Vector3D(1, 0, 0))),
-                boreN, dShip);
-            var src = FakeConnector.At(Vector3D.Zero, boreN, buildUp);
-            var srcMate = ConnectorGeometry.MatingPosition(src);
-
-            // Target up = aligned-up (screenUp at zero ship-rotation) rotated
-            // by the fixed world error rho.
-            Vector3D sR0, sU0;
-            DockingProjection.ScreenBasis(boreN, PilotRight, PilotUp, PilotFwd, out sR0, out sU0);
-            var tgtUp = Rot(sU0, boreN, rho);
-            var tgt = FakeConnector.At(srcMate + boreN * 31.25, -boreN, tgtUp);
-
-            var a = DockingAlignment.Compute(src, tgt, sR, sU);
-            return Math.Abs(a.RollRadians);
+                Assert.That(Math.Abs(a.InputPitch), Is.LessThan(1e-9),
+                    "aft mount: ship pitch has no effect on mating roll (θ=" + th + ")");
+                Assert.That(a.InputRoll, Is.EqualTo(-th).Within(1e-6),
+                    "aft mount: injection about +bore lands at matingRoll=−θ in "
+                    + "screen frame, so InputRoll = −θ (θ=" + th + ")");
+            }
         }
 
-        // ── 4. THE real correctness test, per mount: chasing the needle must
-        //       null the error. Pinned for side AND aft. ──────────────────
+        // Closed-loop fly-to-needle: rotate the cockpit about the bore by the
+        // physically-correct counter-rotation, then check that the TOTAL error
+        // magnitude shrinks. Works on every mount because "rotate about bore"
+        // is what nulls mating-roll regardless of which stick that maps to.
         [Test]
-        public void Correcting_the_physical_roll_error_shrinks_the_chevron()
+        public void Correcting_about_bore_shrinks_total_error_on_every_mount()
         {
             foreach (var m in new[]
             {
@@ -183,33 +122,74 @@ namespace Mal.DockingAid.Tests.Tests
             {
                 foreach (var rho in new[] { -0.4, 0.4 })
                 {
-                    double at0 = ChevronMagAfterCorrection(m.Bore, rho, 0.0);
-                    double at1 = ChevronMagAfterCorrection(m.Bore, rho, 0.5);
+                    var bore = Vector3D.Normalize(m.Bore);
+
+                    // Frac 0.0: no correction applied — full ρ error remains.
+                    var a0 = Setup(m.Bore, rho, PilotRight, PilotUp, PilotFwd);
+
+                    // Frac 0.5: cockpit + source rotated by ρ*0.5 about bore.
+                    // Target stays fixed at world-roll ρ; the residual is ρ/2.
+                    double dShip = rho * 0.5;
+                    var pR = Rot(PilotRight, bore, dShip);
+                    var pU = Rot(PilotUp, bore, dShip);
+                    var pF = Rot(PilotFwd, bore, dShip);
+                    var a1 = SetupRotatedSource(m.Bore, rho, dShip, pR, pU, pF);
+
+                    double e0 = ErrorMagnitude(a0);
+                    double e1 = ErrorMagnitude(a1);
                     TestContext.Out.WriteLine(m.Name + " ρ=" + rho.ToString("+0.0;-0.0")
-                        + " chevron " + at0.ToString("F3") + " → " + at1.ToString("F3")
-                        + (at1 < at0 ? "  (fly-to-needle OK)" : "  (BACKWARDS)"));
-                    Assert.That(at1, Is.LessThan(at0),
-                        m.Name + ": applying the physically-correct roll must "
-                        + "shrink the chevron (ρ=" + rho + ")");
+                        + " |err| " + e0.ToString("F3") + " → " + e1.ToString("F3"));
+                    Assert.That(e1, Is.LessThan(e0),
+                        m.Name + ": applying the physically-correct rotation must "
+                        + "shrink the total error (ρ=" + rho + ")");
                 }
             }
         }
 
-        // ── 3. Monotonic and zero-centred on both mounts. ─────────────────
-        [Test]
-        public void Roll_cue_is_monotonic_and_zero_centred()
+        // Same as Setup but the source connector and pilot frame have both been
+        // rotated about the bore by `dShip` (simulating the pilot driving the
+        // ship by dShip). Target is world-fixed at the original ρ injection.
+        static AlignmentData SetupRotatedSource(Vector3D bore, double rho, double dShip,
+            Vector3D pR, Vector3D pU, Vector3D pF)
         {
-            foreach (var bore in new[] { PequodBore, JackdawBore })
-            {
-                double z; RollCue(bore, 0.0, out z);
-                Assert.That(Math.Abs(z), Is.LessThan(1e-4), "no roll ⇒ chevron at top");
+            var boreN = Vector3D.Normalize(bore);
+            var buildUp = Rot(Math.Abs(boreN.Z) < 0.9
+                ? Vector3D.Normalize(Vector3D.Cross(boreN, new Vector3D(0, 0, 1)))
+                : Vector3D.Normalize(Vector3D.Cross(boreN, new Vector3D(1, 0, 0))),
+                boreN, dShip);
+            var src = FakeConnector.At(Vector3D.Zero, boreN, buildUp);
+            var srcMate = ConnectorGeometry.MatingPosition(src);
 
-                double s, b;
-                RollCue(bore, 0.15, out s);
-                RollCue(bore, 0.45, out b);
-                Assert.That(Math.Sign(s), Is.EqualTo(Math.Sign(b)), "same side as it grows");
-                Assert.That(Math.Abs(b), Is.GreaterThan(Math.Abs(s)), "monotonic in roll");
-            }
+            // Target up = original aligned-up rotated by world-fixed ρ.
+            Vector3D sR0, sU0;
+            DockingProjection.ScreenBasis(boreN, PilotRight, PilotUp, PilotFwd,
+                out sR0, out sU0);
+            var tgtUp = Rot(sU0, boreN, rho);
+            var tgt = FakeConnector.At(srcMate + boreN * 31.25, -boreN, tgtUp);
+
+            return DockingAlignment.Compute(src, tgt, pR, pU, pF);
+        }
+
+        // Both side and aft mounts must be monotonic in injected roll on
+        // whichever input axis is the active one for that mount.
+        [Test]
+        public void Active_input_axis_is_monotonic_in_injected_roll()
+        {
+            // Pequod: active axis = InputPitch
+            var p0 = Setup(PequodBore, 0.0, PilotRight, PilotUp, PilotFwd);
+            var pS = Setup(PequodBore, 0.15, PilotRight, PilotUp, PilotFwd);
+            var pB = Setup(PequodBore, 0.45, PilotRight, PilotUp, PilotFwd);
+            Assert.That(Math.Abs(p0.InputPitch), Is.LessThan(1e-9), "Pequod zero ⇒ pitch 0");
+            Assert.That(Math.Sign(pS.InputPitch), Is.EqualTo(Math.Sign(pB.InputPitch)));
+            Assert.That(Math.Abs(pB.InputPitch), Is.GreaterThan(Math.Abs(pS.InputPitch)));
+
+            // Jackdaw: active axis = InputRoll
+            var j0 = Setup(JackdawBore, 0.0, PilotRight, PilotUp, PilotFwd);
+            var jS = Setup(JackdawBore, 0.15, PilotRight, PilotUp, PilotFwd);
+            var jB = Setup(JackdawBore, 0.45, PilotRight, PilotUp, PilotFwd);
+            Assert.That(Math.Abs(j0.InputRoll), Is.LessThan(1e-9), "Jackdaw zero ⇒ roll 0");
+            Assert.That(Math.Sign(jS.InputRoll), Is.EqualTo(Math.Sign(jB.InputRoll)));
+            Assert.That(Math.Abs(jB.InputRoll), Is.GreaterThan(Math.Abs(jS.InputRoll)));
         }
     }
 }

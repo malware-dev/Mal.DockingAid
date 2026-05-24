@@ -30,7 +30,7 @@ namespace Mal.DockingAid.Tests.Tests
                 Range = 5.0,
                 LateralLength = lateralM,
                 AlignmentDeg = alignDeg,
-                RollRadians = rollDeg * (Math.PI / 180.0),
+                MatingRoll = rollDeg * (Math.PI / 180.0),
             };
         }
 
@@ -68,7 +68,7 @@ namespace Mal.DockingAid.Tests.Tests
         [Test]
         public void Sign_of_roll_does_not_matter()
         {
-            // ColorFor takes |RollRadians|; -8° must be treated identically to +8°.
+            // ColorFor takes |MatingRoll|; -8° must be treated identically to +8°.
             Assert.That(DockingAlignment.ColorFor(At(0.1, 1.0, -8.0), P),
                 Is.EqualTo(P.Good));
             Assert.That(DockingAlignment.ColorFor(At(0.1, 1.0, 8.0), P),

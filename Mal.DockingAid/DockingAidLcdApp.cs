@@ -216,7 +216,8 @@ namespace Mal.DockingAid
                 DockingProjection.ScreenBasis(srcMtx.Forward,
                     pilotMtx.Right, pilotMtx.Up, pilotMtx.Forward,
                     out screenRight, out screenUp);
-                var alignment = DockingAlignment.Compute(src, tgt, screenRight, screenUp);
+                var alignment = DockingAlignment.Compute(src, tgt,
+                    pilotMtx.Right, pilotMtx.Up, pilotMtx.Forward);
 
                 var closure = _closure.Update(
                     tgt.EntityId, alignment.Range, MyAPIGateway.Session.GameplayFrameCounter);
@@ -235,7 +236,7 @@ namespace Mal.DockingAid
                 DrawPitchYawCross(frame, layout, alignment, indicatorColor, _palette.Body);
                 DrawTargetRing(frame, layout, src, tgt, screenRight, screenUp, indicatorColor);
                 DrawRollChevronPair(frame, layout, 0.0, _palette.Chrome);
-                DrawRollChevronPair(frame, layout, alignment.RollRadians, indicatorColor);
+                DrawRollChevronPair(frame, layout, alignment.InputRoll, indicatorColor);
                 DrawNumerics(frame, layout, alignment, closure, src, _palette);
                 if (isReady)
                     DrawCenteredBigText(frame, layout, "READY", _palette.Accent);
@@ -389,9 +390,9 @@ namespace Mal.DockingAid
 
             // Pitch notch — pair of AH_BoreSight chevrons flanking the vertical
             // rail (> <), tips pointing at the rail at the pitch position.
-            // Positive pitch component = target axis is above source forward
-            // (in cockpit frame) → notch above centre.
-            float notchY = layout.Center.Y - (float)(a.PitchComponent * layout.ReticleRadius);
+            // Positive InputPitch = pilot needs to push pitch UP to null the
+            // error ⇒ notch above centre (stick-direction convention).
+            float notchY = layout.Center.Y - (float)(a.InputPitch * layout.ReticleRadius);
             notchY = MathHelper.Clamp(notchY,
                 layout.Center.Y - layout.ReticleRadius,
                 layout.Center.Y + layout.ReticleRadius);
@@ -420,9 +421,9 @@ namespace Mal.DockingAid
 
             // Yaw notch — pair of AH_BoreSight chevrons flanking the horizontal
             // rail (v above, ^ below), tips pointing at the rail at the yaw
-            // position. The screen frame already encodes per-mount orientation,
-            // so no per-mount mirror is applied here.
-            float notchX = layout.Center.X + (float)a.YawComponent * layout.ReticleRadius;
+            // position. Positive InputYaw = pilot needs to push yaw RIGHT ⇒
+            // notch right of centre.
+            float notchX = layout.Center.X + (float)a.InputYaw * layout.ReticleRadius;
             notchX = MathHelper.Clamp(notchX,
                 layout.Center.X - layout.ReticleRadius,
                 layout.Center.X + layout.ReticleRadius);
