@@ -89,6 +89,7 @@ namespace Mal.DockingAid
             public float BigTextNudge;
             public float NumericTextHeight;
             public float RollVerticalNudge;
+            public float RingStroke;
         }
 
         static Layout BuildLayout(Vector2 surfaceSize, Vector2 textureSize)
@@ -110,7 +111,7 @@ namespace Mal.DockingAid
                 ReticleRadius = reticleRadius,
                 // Sprite pixel sizes — ratios calibrated so a 256-LCD looks
                 // right; on a 512-LCD everything is naturally double.
-                BoreSize = reticleRadius * 0.16f,
+                BoreSize = reticleRadius * 0.32f,
                 TipGap = Math.Max(1f, reticleRadius * 0.015f),
                 RailThickness = Math.Max(1f, reticleRadius * 0.02f),
                 Margin = Math.Max(2f, reticleRadius * 0.05f),
@@ -126,6 +127,13 @@ namespace Mal.DockingAid
                 NumericTextHeight = numericTextScale * FontHeightPx,
                 // 4 virtual px at the 256-LCD baseline; scales with surface.
                 RollVerticalNudge = 4f * textScale,
+                // Ring stroke for the constructed-ring reticle and target ring.
+                // 0.0625 matches the intrinsic stroke ratio of Circle_Hollow.dds
+                // (16 px / 256 radius on the 512² atlas tile); 2 px floor keeps
+                // it visible on the smallest text panels where R·K dips below
+                // ~3 px and the hollow-circle texture's sampled stroke washes
+                // out entirely.
+                RingStroke = Math.Max(2f, reticleRadius * 0.0625f),
             };
         }
 
@@ -232,9 +240,13 @@ namespace Mal.DockingAid
                 // chevrons + rails are Chrome. (Earlier this dimmed the target
                 // ring too — wrong: it's the single most important thing to
                 // see, especially on small LCDs.)
+                // Order matters: the reticle and target ring are both
+                // constructed from a filled disc plus a background-colour
+                // inner disc, so anything we want visible inside them has
+                // to draw AFTER them. Cross + chevrons over both rings.
                 DrawReticle(frame, layout, _palette.Body);
-                DrawPitchYawCross(frame, layout, alignment, indicatorColor, _palette.Body);
                 DrawTargetRing(frame, layout, src, tgt, screenRight, screenUp, indicatorColor);
+                DrawPitchYawCross(frame, layout, alignment, indicatorColor, _palette.Body);
                 DrawRollChevronPair(frame, layout, 0.0, _palette.Chrome);
                 DrawRollChevronPair(frame, layout, alignment.InputRoll, indicatorColor);
                 DrawNumerics(frame, layout, alignment, closure, src, _palette);
@@ -265,15 +277,31 @@ namespace Mal.DockingAid
 
         // ── Drawing ─────────────────────────────────────────────────────────
 
-        static void DrawReticle(MySpriteDrawFrame frame, Layout layout, Color color)
+        // Constructed ring — filled Circle in ring colour with a slightly
+        // smaller filled Circle in background colour stacked on top. Gives a
+        // controllable stroke that stays crisp at every panel size, instead of
+        // the hollow-circle texture's sampled stroke that goes sub-pixel on
+        // small LCDs. Stroke width comes from layout.RingStroke.
+        void DrawReticle(MySpriteDrawFrame frame, Layout layout, Color color)
         {
+            float outerD = layout.ReticleRadius * 2f;
+            float innerD = Math.Max(0f, outerD - layout.RingStroke * 2f);
             frame.Add(new MySprite
             {
                 Type = SpriteType.TEXTURE,
-                Data = "CircleHollow",
+                Data = "Circle",
                 Position = layout.Center,
-                Size = new Vector2(layout.ReticleRadius * 2f, layout.ReticleRadius * 2f),
+                Size = new Vector2(outerD, outerD),
                 Color = color,
+                Alignment = TextAlignment.CENTER
+            });
+            frame.Add(new MySprite
+            {
+                Type = SpriteType.TEXTURE,
+                Data = "Circle",
+                Position = layout.Center,
+                Size = new Vector2(innerD, innerD),
+                Color = _palette.Background,
                 Alignment = TextAlignment.CENTER
             });
         }
@@ -477,13 +505,29 @@ namespace Mal.DockingAid
                 return;
             }
 
+            // Constructed ellipse ring — same stacked-Circle trick as the
+            // reticle. Subtracting 2·RingStroke from each axis keeps the
+            // stroke perceptually constant along the rim's perpendicular,
+            // even though the ellipse is highly eccentric at edge-on tilt.
+            float innerMajor = Math.Max(0f, ring.MajorDiameterPx - layout.RingStroke * 2f);
+            float innerMinor = Math.Max(0f, ring.MinorDiameterPx - layout.RingStroke * 2f);
             frame.Add(new MySprite
             {
                 Type = SpriteType.TEXTURE,
-                Data = "CircleHollow",
+                Data = "Circle",
                 Position = ring.ScreenCenter,
                 Size = new Vector2(ring.MajorDiameterPx, ring.MinorDiameterPx),
                 Color = color,
+                RotationOrScale = ring.RotationRadians,
+                Alignment = TextAlignment.CENTER
+            });
+            frame.Add(new MySprite
+            {
+                Type = SpriteType.TEXTURE,
+                Data = "Circle",
+                Position = ring.ScreenCenter,
+                Size = new Vector2(innerMajor, innerMinor),
+                Color = _palette.Background,
                 RotationOrScale = ring.RotationRadians,
                 Alignment = TextAlignment.CENTER
             });
@@ -525,7 +569,7 @@ namespace Mal.DockingAid
             float x = MathHelper.Clamp(ringCenter.X, min.X + inset, max.X - inset);
             float y = MathHelper.Clamp(ringCenter.Y, min.Y + inset, max.Y - inset);
 
-            // AH_PullUp default points UP (-Y). atan2(dy, dx) on screen coords
+            // Triangle's pointy end is up (-Y). atan2(dy, dx) on screen coords
             // gives the CW rotation that aims +X at dir; add π/2 to rotate the
             // up-pointing default to point along dir instead.
             float angle = (float)Math.Atan2(dir.Y, dir.X) + HalfPi;
@@ -534,7 +578,7 @@ namespace Mal.DockingAid
             frame.Add(new MySprite
             {
                 Type = SpriteType.TEXTURE,
-                Data = "AH_PullUp",
+                Data = "Triangle",
                 Position = new Vector2(x, y),
                 Size = new Vector2(size, size),
                 Color = color,
