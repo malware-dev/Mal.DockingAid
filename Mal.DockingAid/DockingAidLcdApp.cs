@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 using Sandbox.Game.GameSystems.TextSurfaceScripts;
 using Sandbox.ModAPI;
 using VRage.Game.GUI.TextPanel;
@@ -47,6 +48,10 @@ namespace Mal.DockingAid
 
         readonly ClosureTracker _closure = new ClosureTracker();
 
+        // Reused for IMyTextSurface.MeasureStringInPixels — that API takes a
+        // StringBuilder; we want to avoid allocating one per Run() call.
+        readonly StringBuilder _measureSb = new StringBuilder(32);
+
         DockingAidPalette _palette = DockingAidPalette.Default;
         Color _lastForeground;
         Color _lastBackground;
@@ -81,7 +86,8 @@ namespace Mal.DockingAid
             public float TipGap;
             public float RailThickness;
             public float NumericTextScale;
-            public float StatusTextScale;
+            public float AlertTextScale;
+            public float SubtextScale;
             public float BigTextScale;
             public float Margin;
             public float LineHeight;
@@ -100,7 +106,15 @@ namespace Mal.DockingAid
             float textScale = reticleRadius / ReferenceRadius;
 
             float numericTextScale = 0.55f * textScale;
-            float statusTextScale = 0.95f * textScale;
+            // Alert text (NO TARGET, NO ANTENNA, ...) sits ALONE on the panel
+            // as the only thing the pilot needs to read in a fault state —
+            // sized large so it's instantly legible on the smallest corner
+            // LCDs without crowding anything else (there's nothing else).
+            float alertTextScale = 1.9f * textScale;
+            // Subtext (the why-no-target hint under "NO TARGET") at 2× the
+            // numeric line scale — readable from a pilot seat without
+            // competing with the alert above.
+            float subtextScale = 1.1f * textScale;
             float bigTextScale = 1.7f * textScale;
 
             return new Layout
@@ -119,10 +133,11 @@ namespace Mal.DockingAid
                 // metrics, NOT the reticle — line gap must match real text
                 // height or numeric lines overlap.
                 NumericTextScale = numericTextScale,
-                StatusTextScale = statusTextScale,
+                AlertTextScale = alertTextScale,
+                SubtextScale = subtextScale,
                 BigTextScale = bigTextScale,
                 LineHeight = numericTextScale * FontLineSpacedPx,
-                CenteredTextNudge = statusTextScale * FontHalfHeightPx,
+                CenteredTextNudge = alertTextScale * FontHalfHeightPx,
                 BigTextNudge = bigTextScale * FontHalfHeightPx,
                 NumericTextHeight = numericTextScale * FontHeightPx,
                 // 4 virtual px at the 256-LCD baseline; scales with surface.
@@ -159,7 +174,7 @@ namespace Mal.DockingAid
                 DockingAidSession session;
                 if (!DockingAidSession.TryGet(out session))
                 {
-                    DrawCenteredText(frame, layout, "session not ready", _palette.Faint, layout.StatusTextScale);
+                    DrawCenteredText(frame, layout, "session not ready", _palette.Foreground, layout.AlertTextScale);
                     return;
                 }
 
@@ -167,26 +182,30 @@ namespace Mal.DockingAid
                 long lcdGridId = Block.CubeGrid.EntityId;
                 DockingDisplayState state;
                 IMyShipConnector src, tgt;
-                if (comp == null || !comp.TryGetCurrent(lcdGridId, out state, out src, out tgt))
+                NoTargetReason noTargetReason;
+                if (comp == null || !comp.TryGetCurrent(lcdGridId, out state, out src, out tgt, out noTargetReason))
                 {
                     // No connector on this construct has been configured for
                     // docking — surface the setup fault so the player knows.
                     ResetTrackingState();
-                    DrawCenteredText(frame, layout, "NO DOCKING CONNECTOR", _palette.Faint, layout.StatusTextScale);
+                    DrawCenteredText(frame, layout, "NO DOCKING CONNECTOR", _palette.Foreground, layout.AlertTextScale);
                     return;
                 }
 
                 if (state == DockingDisplayState.NoSourceAntenna)
                 {
                     ResetTrackingState();
-                    DrawCenteredText(frame, layout, "NO ANTENNA", _palette.Faint, layout.StatusTextScale);
+                    DrawCenteredText(frame, layout, "NO ANTENNA", _palette.Foreground, layout.AlertTextScale);
                     return;
                 }
 
                 if (state == DockingDisplayState.NoTargetInRange || tgt == null)
                 {
                     ResetTrackingState();
-                    DrawCenteredText(frame, layout, "NO TARGET", _palette.Faint, layout.StatusTextScale);
+                    float noTargetScale = DrawCenteredText(frame, layout, "NO TARGET", _palette.Foreground, layout.AlertTextScale);
+                    string hint = NoTargetHint(noTargetReason);
+                    if (hint != null)
+                        DrawSubtext(frame, layout, hint, _palette.Body, noTargetScale);
                     return;
                 }
 
@@ -371,7 +390,7 @@ namespace Mal.DockingAid
                 layout.ViewportTopLeft + new Vector2(layout.SurfaceSize.X - layout.Margin, layout.Margin),
                 "CLO " + closure.ToString("+0.00;-0.00; 0.00") + " m/s",
                 _palette.Body, layout.NumericTextScale, TextAlignment.RIGHT);
-            DrawCenteredText(frame, layout, "NO PILOT REFERENCE", _palette.Faint, layout.StatusTextScale);
+            DrawCenteredText(frame, layout, "NO PILOT REFERENCE", _palette.Foreground, layout.AlertTextScale);
             DrawConnectorLabel(frame, layout, NameOf(src), _palette.Foreground);
         }
 
@@ -669,17 +688,83 @@ namespace Mal.DockingAid
             });
         }
 
-        static void DrawCenteredText(MySpriteDrawFrame frame, Layout layout, string text,
-            Color color, float scale)
+        // Renders a centered alert/status string and returns the actual scale
+        // used after auto-fit. If the text would overflow the panel at the
+        // requested scale, it's scaled down to fit (long labels like
+        // "NO PILOT REFERENCE" don't read as "O PILOT REFEREN" on small
+        // corner LCDs). Caller passes the returned scale to DrawSubtext so
+        // a hint line tracks the parent's actual rendered height.
+        float DrawCenteredText(MySpriteDrawFrame frame, Layout layout, string text, Color color, float scale)
         {
-            // Text origin sits roughly on the baseline; shift up slightly so it
-            // visually centres on the reticle middle.
+            float effectiveScale = FitToWidth(text, scale, layout.SurfaceSize.X - 2f * layout.Margin);
+            // Vertical centering nudge must track the rendered scale, not the
+            // requested scale — otherwise a scaled-down label drifts above
+            // the reticle middle.
+            float nudge = effectiveScale * FontHalfHeightPx;
             frame.Add(new MySprite
             {
                 Type = SpriteType.TEXT,
                 Data = text,
-                Position = layout.Center - new Vector2(0f, layout.CenteredTextNudge),
-                RotationOrScale = scale,
+                Position = layout.Center - new Vector2(0f, nudge),
+                RotationOrScale = effectiveScale,
+                Color = color,
+                Alignment = TextAlignment.CENTER,
+                FontId = FontId
+            });
+            return effectiveScale;
+        }
+
+        // Measures the text at the requested scale and shrinks it just enough
+        // to fit in availableWidth. Returns the original scale when the text
+        // already fits (or when measurement fails / produces a non-positive
+        // width, which can happen briefly during surface init).
+        float FitToWidth(string text, float scale, float availableWidth)
+        {
+            if (availableWidth <= 0f) return scale;
+            _measureSb.Clear();
+            _measureSb.Append(text);
+            var measured = Surface.MeasureStringInPixels(_measureSb, FontId, scale);
+            if (measured.X <= 0f || measured.X <= availableWidth) return scale;
+            return scale * (availableWidth / measured.X);
+        }
+
+        // Short troubleshooting hint matching the NoTargetReason — sits as
+        // subtext beneath "NO TARGET". Null means no hint (Unknown: we
+        // genuinely saw no foreign grids in range, so there's nothing
+        // actionable to say beyond "NO TARGET" itself).
+        //
+        // "no usable connectors" intentionally avoids "not configured":
+        // the default UseForDocking flag is on, so the common cause of this
+        // bucket isn't a forgotten setting — it's connectors that are
+        // already docked, damaged, or unpowered. The label is honest about
+        // covering all three.
+        static string NoTargetHint(NoTargetReason reason)
+        {
+            switch (reason)
+            {
+                case NoTargetReason.NoAntennaLink: return "no antenna link";
+                case NoTargetReason.NotConfigured: return "no usable connectors";
+                case NoTargetReason.WrongOrientation: return "wrong orientation";
+                default: return null;
+            }
+        }
+
+        // Renders the subtext below the alert. parentEffectiveScale is the
+        // scale DrawCenteredText actually used after its own auto-fit, so the
+        // subtext sits just under the rendered parent regardless of whether
+        // the parent was scaled down. The subtext itself also auto-fits.
+        void DrawSubtext(MySpriteDrawFrame frame, Layout layout, string text, Color color, float parentEffectiveScale)
+        {
+            float effectiveScale = FitToWidth(text, layout.SubtextScale, layout.SurfaceSize.X - 2f * layout.Margin);
+            float parentBottomFromCenter = parentEffectiveScale * FontHalfHeightPx;
+            float gap = effectiveScale * 4f;
+            float y = layout.Center.Y + parentBottomFromCenter + gap;
+            frame.Add(new MySprite
+            {
+                Type = SpriteType.TEXT,
+                Data = text,
+                Position = new Vector2(layout.Center.X, y),
+                RotationOrScale = effectiveScale,
                 Color = color,
                 Alignment = TextAlignment.CENTER,
                 FontId = FontId

@@ -23,6 +23,21 @@ namespace Mal.DockingAid
         Locked,
     }
 
+    /// <summary>
+    ///     Sub-classification of <see cref="DockingDisplayState.NoTargetInRange"/> — surfaces
+    ///     the closest-to-working filter the scan rejected. Higher integer value = more
+    ///     actionable (the target was closer to being usable). Order is load-bearing:
+    ///     <see cref="DockingTargetingComponent.ReportNoTarget"/> picks max across all
+    ///     candidates seen during a scan.
+    /// </summary>
+    public enum NoTargetReason
+    {
+        Unknown = 0,
+        NotConfigured = 1,
+        NoAntennaLink = 2,
+        WrongOrientation = 3,
+    }
+
     public class DockingTargetingComponent : ModComponent
     {
         struct ReportedState
@@ -31,6 +46,7 @@ namespace Mal.DockingAid
             public long SourceId;
             public long TargetId;   // 0 when not applicable
             public int Tick;
+            public NoTargetReason Reason; // populated only when Kind == NoTargetInRange
         }
 
         // Keyed by source connector EntityId, so multiple connectors on the
@@ -46,7 +62,8 @@ namespace Mal.DockingAid
         ///     ignored for <see cref="DockingDisplayState.NoSourceAntenna"/> and
         ///     <see cref="DockingDisplayState.NoTargetInRange"/>; required for
         ///     <see cref="DockingDisplayState.Tracking"/> and
-        ///     <see cref="DockingDisplayState.Locked"/>.
+        ///     <see cref="DockingDisplayState.Locked"/>. For NoTargetInRange reports
+        ///     prefer <see cref="ReportNoTarget"/> so the diagnostic reason is captured.
         /// </summary>
         public void Report(DockingDisplayState kind, IMyShipConnector source, IMyShipConnector target)
         {
@@ -60,6 +77,25 @@ namespace Mal.DockingAid
                 SourceId = source.EntityId,
                 TargetId = target != null ? target.EntityId : 0L,
                 Tick = MyAPIGateway.Session.GameplayFrameCounter,
+                Reason = NoTargetReason.Unknown,
+            };
+        }
+
+        /// <summary>
+        ///     Records a NoTargetInRange report plus its diagnostic reason — why the
+        ///     scan found no usable target. The reason becomes the subtext hint on
+        ///     the LCD ("wrong orientation", "no antenna link", ...).
+        /// </summary>
+        public void ReportNoTarget(IMyShipConnector source, NoTargetReason reason)
+        {
+            if (source == null) return;
+            _byConnector[source.EntityId] = new ReportedState
+            {
+                Kind = DockingDisplayState.NoTargetInRange,
+                SourceId = source.EntityId,
+                TargetId = 0L,
+                Tick = MyAPIGateway.Session.GameplayFrameCounter,
+                Reason = reason,
             };
         }
 
@@ -84,11 +120,13 @@ namespace Mal.DockingAid
             long lcdGridId,
             out DockingDisplayState state,
             out IMyShipConnector source,
-            out IMyShipConnector target)
+            out IMyShipConnector target,
+            out NoTargetReason noTargetReason)
         {
             state = DockingDisplayState.NoTargetInRange;
             source = null;
             target = null;
+            noTargetReason = NoTargetReason.Unknown;
 
             IMyEntity lcdEnt;
             if (!MyAPIGateway.Entities.TryGetEntityById(lcdGridId, out lcdEnt)) return false;
@@ -122,6 +160,7 @@ namespace Mal.DockingAid
 
             state = bestReport.Kind;
             source = bestSrc;
+            noTargetReason = bestReport.Reason;
 
             if (bestReport.TargetId != 0)
             {

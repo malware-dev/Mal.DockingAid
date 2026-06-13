@@ -44,6 +44,16 @@ namespace Mal.DockingAid
 
         public override void UpdateOnceBeforeFrame()
         {
+            // Display-only mod: a dedicated server has no LCD renderer and no
+            // terminal UI, so the scan loop, the targeting reports, and the
+            // terminal control registration all exist solely to feed
+            // DockingAidLcdApp / the in-game terminal — neither of which runs
+            // on DS. Bail out before doing any of that work.
+            if (MyAPIGateway.Utilities.IsDedicated)
+            {
+                NeedsUpdate = MyEntityUpdateEnum.NONE;
+                return;
+            }
             ConnectorTerminalControls.DoOnce();
             NeedsUpdate = MyEntityUpdateEnum.EACH_100TH_FRAME;
         }
@@ -90,14 +100,15 @@ namespace Mal.DockingAid
                 return;
             }
 
-            var tgt = FindBestTarget(src);
+            NoTargetReason failReason;
+            var tgt = FindBestTarget(src, out failReason);
             if (tgt != null)
             {
                 EnterTracking(src, tgt);
             }
             else
             {
-                Report(DockingDisplayState.NoTargetInRange, src, null);
+                ReportNoTarget(src, failReason);
                 SetState(ScanState.Idle, MyEntityUpdateEnum.EACH_100TH_FRAME);
             }
         }
@@ -106,6 +117,12 @@ namespace Mal.DockingAid
         {
             var comp = TryGetTargetingComponent();
             if (comp != null) comp.Report(kind, source, target);
+        }
+
+        void ReportNoTarget(IMyShipConnector source, NoTargetReason reason)
+        {
+            var comp = TryGetTargetingComponent();
+            if (comp != null) comp.ReportNoTarget(source, reason);
         }
 
         void ReportIdle(IMyShipConnector source)
@@ -178,7 +195,7 @@ namespace Mal.DockingAid
 
         // ── Target search ───────────────────────────────────────────────────
 
-        IMyShipConnector FindBestTarget(IMyShipConnector src)
+        IMyShipConnector FindBestTarget(IMyShipConnector src, out NoTargetReason reason)
         {
             var srcGrid = src.CubeGrid;
             var srcVol = srcGrid.WorldVolume;
@@ -201,29 +218,47 @@ namespace Mal.DockingAid
             double bestDistSq = double.MaxValue;
             double rangeSq = range * range;
 
+            // Track the highest-rank reason any rejected candidate hit, so the
+            // LCD can hint why nothing came back. Higher = closer to working;
+            // we keep the max because that's the most actionable thing the
+            // pilot could fix to get a target.
+            NoTargetReason bestReason = NoTargetReason.Unknown;
+
             for (int i = 0; i < _scratchEntities.Count; i++)
             {
                 var grid = _scratchEntities[i] as IMyCubeGrid;
                 if (grid == null) continue;
                 if (grid.IsSameConstructAs(srcGrid)) continue;
-                if (!AnyAntennasInMutualRange(_scratchSrcAntennas, grid)) continue;
+                if (!AnyAntennasInMutualRange(_scratchSrcAntennas, grid))
+                {
+                    if (bestReason < NoTargetReason.NoAntennaLink)
+                        bestReason = NoTargetReason.NoAntennaLink;
+                    continue;
+                }
 
                 _scratchBlocks.Clear();
                 grid.GetBlocks(_scratchBlocks, IsConnectorBlock);
 
                 if (_scratchBlocks.Count == 0) continue;
 
+                bool gridHasEligible = false;
                 for (int j = 0; j < _scratchBlocks.Count; j++)
                 {
                     var c = _scratchBlocks[j].FatBlock as IMyShipConnector;
                     if (!IsEligibleTarget(c)) continue;
+                    gridHasEligible = true;
 
                     var tgtMate = ConnectorGeometry.MatingPosition(c);
                     var distSq = Vector3D.DistanceSquared(srcMate, tgtMate);
                     if (distSq > rangeSq) continue;
 
                     var dot = Vector3D.Dot(srcFwd, c.WorldMatrix.Forward);
-                    if (dot > FacingCosineThreshold) continue;
+                    if (dot > FacingCosineThreshold)
+                    {
+                        if (bestReason < NoTargetReason.WrongOrientation)
+                            bestReason = NoTargetReason.WrongOrientation;
+                        continue;
+                    }
 
                     if (distSq < bestDistSq)
                     {
@@ -231,11 +266,15 @@ namespace Mal.DockingAid
                         best = c;
                     }
                 }
+
+                if (!gridHasEligible && bestReason < NoTargetReason.NotConfigured)
+                    bestReason = NoTargetReason.NotConfigured;
             }
 
             _scratchEntities.Clear();
             _scratchBlocks.Clear();
             _scratchSrcAntennas.Clear();
+            reason = bestReason;
             return best;
         }
 
