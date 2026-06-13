@@ -71,3 +71,7 @@ If the LCD shows one of these instead of the indicator:
 [h2]On dedicated servers[/h2]
 
 Server-friendly: the per-connector scan runs only on the clients that render LCDs, so the dedi process does no extra work for this mod.
+
+[h2]Source[/h2]
+
+Code, issues, and changelog live on GitHub: [url=https://github.com/malware-dev/Mal.DockingAid]github.com/malware-dev/Mal.DockingAid[/url] - MIT-licensed.

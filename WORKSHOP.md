@@ -59,4 +59,8 @@ If the LCD shows one of these instead of the indicator:
 
 Server-friendly: the per-connector scan runs only on the clients that render LCDs, so the dedi process does no extra work for this mod.
 
+## Source
+
+Code, issues, and changelog live on GitHub: https://github.com/malware-dev/Mal.DockingAid - MIT-licensed.
+
 [^axes]: Pitch (nose up/down), yaw (nose left/right), and roll (banking around the forward axis) are the three rotation axes from the pilot's perspective. Each maps to a stick input.
