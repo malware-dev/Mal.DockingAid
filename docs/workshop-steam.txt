@@ -1,0 +1,73 @@
+Turns any LCD on your ship into a live docking aid. Pitch, yaw and roll [i](the three rotation axes from the pilot's frame: nose up/down, nose left/right, and banking)[/i] chevrons show you which stick to push, and which way. Same rule on every mount - forward, aft, side, top, bottom - no mental gymnastics.
+
+[h2]What the screen shows[/h2]
+
+[img]https://raw.githubusercontent.com/malware-dev/Mal.DockingAid/main/docs/img/reticle.png[/img]
+[b]Outer ring + cross[/b] - Your connector's bore, fixed at the centre of the panel.
+
+[img]https://raw.githubusercontent.com/malware-dev/Mal.DockingAid/main/docs/img/target-ring.png[/img]
+[b]Coloured inner ring[/b] - The partner connector, projected into your view. Concentric and same-size means you're aligned; offset and foreshortened means there's work to do.
+
+[img]https://raw.githubusercontent.com/malware-dev/Mal.DockingAid/main/docs/img/pitch-yaw.png[/img]
+[b]Chevrons on the cross[/b] - Pitch and yaw error. Push the matching stick toward the chevron and the error nulls.
+
+[img]https://raw.githubusercontent.com/malware-dev/Mal.DockingAid/main/docs/img/roll.png[/img]
+[b]Chevrons on the rim[/b] - Roll error, same rule.
+
+[img]https://raw.githubusercontent.com/malware-dev/Mal.DockingAid/main/docs/img/offscreen.png[/img]
+[b]Off-screen arrow[/b] - When the target ring sits outside the panel, the ring is replaced by a triangle pinned to the rim, pointing the way you need to move to bring the target back into view.
+
+Two more readouts, not in the crops above:
+
+[list]
+[*][b]RNG / CLO[/b] - range to the docking point and closure rate, top corners of the panel.
+[*][b]Connector name[/b] - bottom of the panel, so multi-connector ships are unambiguous.
+[/list]
+
+Ring colour follows the alignment band: green inside the docked tolerance, amber for warning, red outside. The screen reads [b]READY[/b] when the locks will engage and [b]LOCKED[/b] once you've docked.
+
+[h2]Mount orientation[/h2]
+
+Your docking connector can sit anywhere on the ship - forward, aft, side, top, or bottom - and the same chevron rule still works. Push the stick toward the chevron and the alignment error nulls, every time. No "this stick now means that on this mount" remap.
+
+How: imagine a camera sitting at your docking connector, looking the way it docks. The camera's "up", though, comes from your cockpit, not the connector. So even if the dock is bolted to your belly or sticks out sideways, the chevrons line up with the pitch, yaw and roll you already know from the stick. A rear-mounted connector reads the same as a forward one - you're still flying your ship the way you always do, just headed tail-first toward the partner.
+
+That's also why the panel falls back to [b]NO PILOT REFERENCE[/b] when nobody is in a controllable seat - without an active cockpit, there's no "up" to anchor the chevron mapping to.
+
+[h2]Setup[/h2]
+
+[olist]
+[*]Both ships need a working radio antenna with [b]Broadcasting[/b] on, and their ranges have to overlap - the same handshake SE uses for ID broadcasts.
+[*]On any LCD on the construct you're docking from, pick the [b]Docking Aid[/b] script.
+[*]Sit in a cockpit on that construct. The indicator orients to whoever's actively piloting.
+[/olist]
+
+That's it for the common case - every connector contributes by default.
+
+[h2]Per-connector tuning[/h2]
+
+Each connector gets two terminal controls just below the vanilla "Use for parking":
+
+[list]
+[*][b]Used for docking[/b] (default: on) - turn off on connectors that shouldn't contribute, like ejectors.
+[*][b]Docking detection range[/b] (slider, 1-50 m, default 20 m) - how far that connector looks for a target.
+[/list]
+
+[h2]Trade stations work too[/h2]
+
+A target connector counts if either [b]Used for docking[/b] [i]or[/i] vanilla [b]Trading[/b] is enabled on it - so NPC trade stations are reachable with no setup on their end. Player-built trade hubs benefit from the same rule.
+
+[h2]Troubleshooting[/h2]
+
+If the LCD shows one of these instead of the indicator:
+
+[list]
+[*][b]NO DOCKING CONNECTOR[/b] - no connector on this construct has the docking checkbox enabled.
+[*][b]NO ANTENNA[/b] - your ship has no working, broadcasting antenna.
+[*][b]NO TARGET[/b] - nothing usable in range. The smaller hint narrows it: [i]no antenna link[/i] (the target's antenna isn't reaching yours - check that Broadcasting is on), [i]no usable connectors[/i] (a candidate's connectors are unconfigured, busy or unpowered), or [i]wrong orientation[/i] (you're close, just not facing each other).
+[*][b]NO PILOT REFERENCE[/b] - nobody is piloting the construct, so "up" is undefined. Sit in a cockpit.
+[/list]
+
+[h2]On dedicated servers[/h2]
+
+Server-friendly: the per-connector scan runs only on the clients that render LCDs, so the dedi process does no extra work for this mod.
