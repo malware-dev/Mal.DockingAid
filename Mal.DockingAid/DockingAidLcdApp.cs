@@ -229,7 +229,6 @@ namespace Mal.DockingAid
                 // of a silently wrong frame. (Cross still uses the host matrix
                 // for now — ring correctness first; cross consistency is the
                 // next step once this is confirmed in-game.)
-                var srcMtx = src.WorldMatrix;
                 var pilot = ResolvePilotController(src);
 
                 if (pilot == null)
@@ -240,7 +239,7 @@ namespace Mal.DockingAid
 
                 var pilotMtx = pilot.WorldMatrix;
                 Vector3D screenRight, screenUp;
-                DockingProjection.ScreenBasis(srcMtx.Forward,
+                DockingProjection.ScreenBasis(ConnectorGeometry.MateAxis(src),
                     pilotMtx.Right, pilotMtx.Up, pilotMtx.Forward,
                     out screenRight, out screenUp);
                 var alignment = DockingAlignment.Compute(src, tgt,

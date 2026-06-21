@@ -206,7 +206,7 @@ namespace Mal.DockingAid
             MyGamePruningStructure.GetAllTopMostEntitiesInSphere(ref query, _scratchEntities);
 
             var srcMate = ConnectorGeometry.MatingPosition(src);
-            var srcFwd = src.WorldMatrix.Forward;
+            var srcAxis = ConnectorGeometry.MateAxis(src);
 
             // HasBroadcastingAntenna already verified the source has at least
             // one antenna; collect them once here so AntennasInMutualRange
@@ -252,7 +252,7 @@ namespace Mal.DockingAid
                     var distSq = Vector3D.DistanceSquared(srcMate, tgtMate);
                     if (distSq > rangeSq) continue;
 
-                    var dot = Vector3D.Dot(srcFwd, c.WorldMatrix.Forward);
+                    var dot = Vector3D.Dot(srcAxis, ConnectorGeometry.MateAxis(c));
                     if (dot > FacingCosineThreshold)
                     {
                         if (bestReason < NoTargetReason.WrongOrientation)

@@ -69,14 +69,14 @@ namespace Mal.DockingAid
             Vector3D screenRight, Vector3D screenUp,
             Vector2 screenCenter, float reticleRadius, float offScreenFallbackPx)
         {
-            var srcMtx = src.WorldMatrix;
-            var tgtMtx = tgt.WorldMatrix;
+            var srcAxis = ConnectorGeometry.MateAxis(src);
+            var tgtAxis = ConnectorGeometry.MateAxis(tgt);
 
             var srcMate = ConnectorGeometry.MatingPosition(src);
             var tgtMate = ConnectorGeometry.MatingPosition(tgt);
 
             var rel = tgtMate - srcMate;
-            double depth = Vector3D.Dot(rel, srcMtx.Forward);
+            double depth = Vector3D.Dot(rel, srcAxis);
 
             double ringRadiusM = tgt.CubeGrid.GridSize * RingRadiusFraction;
             float focal = reticleRadius * FocalMultiplier;
@@ -122,11 +122,11 @@ namespace Mal.DockingAid
             double diameterPx = (ringRadiusM * 2.0 / depthEff) * focal;
             result.MajorDiameterPx = (float)diameterPx;
 
-            // Minor axis foreshortening = cos(tilt). Mating requires
-            // source.Forward = -tgt.Forward, so cos(tilt) = -dot. ConnectorLogic
+            // Minor axis foreshortening = cos(tilt). Mating requires the two
+            // mate axes to be anti-parallel, so cos(tilt) = -dot. ConnectorLogic
             // only accepts candidates within 45° of anti-parallel, so cosTilt
             // is always positive — no abs needed.
-            double cosTilt = -Vector3D.Dot(tgtMtx.Forward, srcMtx.Forward);
+            double cosTilt = -Vector3D.Dot(tgtAxis, srcAxis);
             if (cosTilt > 1.0) cosTilt = 1.0;
             result.MinorDiameterPx = (float)(diameterPx * cosTilt);
 
@@ -134,7 +134,7 @@ namespace Mal.DockingAid
             // frame (same frame as the ring's screen offset, so the ellipse's
             // tilt reads consistently). When tilt is zero the vector is zero
             // and atan2(0,0) returns 0 — harmless, the ellipse is a circle.
-            var tiltAxis3D = Vector3D.Cross(tgtMtx.Forward, srcMtx.Forward);
+            var tiltAxis3D = Vector3D.Cross(tgtAxis, srcAxis);
             double axRight = Vector3D.Dot(tiltAxis3D, screenRight);
             double axUp = Vector3D.Dot(tiltAxis3D, screenUp);
             result.RotationRadians = (float)Math.Atan2(-axUp, axRight);

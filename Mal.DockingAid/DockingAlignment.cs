@@ -51,17 +51,22 @@ namespace Mal.DockingAid
             var delta = tgtMate - srcMate; // src -> tgt
             var range = delta.Length();
 
-            var srcMtx = src.WorldMatrix;
-            var tgtMtx = tgt.WorldMatrix;
-            var bore = srcMtx.Forward;
+            // Mate axes, not WorldMatrix.Forward: the Structural Platform
+            // Connector (and any modded equivalent) overrides ConnectDirection
+            // and mates through a different face. tgtMateUp gives the
+            // mating-roll calculation a real perpendicular reference even when
+            // tgt.Up runs along the bore.
+            var bore = ConnectorGeometry.MateAxis(src);
+            var tgtAxis = ConnectorGeometry.MateAxis(tgt);
+            var tgtMateUp = ConnectorGeometry.MateUp(tgt);
 
-            // Target's lateral offset perpendicular to its bore — drives the
-            // status thresholds.
-            var deltaAlongTgtFwd = Vector3D.Dot(delta, tgtMtx.Forward);
-            var targetLateralFromSrc = delta - deltaAlongTgtFwd * tgtMtx.Forward;
+            // Target's lateral offset perpendicular to its mate axis - drives
+            // the status thresholds.
+            var deltaAlongTgt = Vector3D.Dot(delta, tgtAxis);
+            var targetLateralFromSrc = delta - deltaAlongTgt * tgtAxis;
 
-            // Forwards alignment: −1 dot ⇒ perfectly anti-parallel = mating-aligned.
-            var fwdDot = Vector3D.Dot(bore, tgtMtx.Forward);
+            // Forwards alignment: -1 dot = perfectly anti-parallel = mating-aligned.
+            var fwdDot = Vector3D.Dot(bore, tgtAxis);
             var fwdAngleDeg = Math.Acos(MathHelper.Clamp(fwdDot, -1.0, 1.0)) * (180.0 / Math.PI);
             var alignmentDeg = 180.0 - fwdAngleDeg;
 
@@ -72,17 +77,17 @@ namespace Mal.DockingAid
             DockingProjection.ScreenBasis(bore, pilotRight, pilotUp, pilotForward,
                 out screenRight, out screenUp);
 
-            // Mating roll: angle of target.Up around the bore, folded by π/2
-            // (4 cardinal mounts all count as docked). Cap ±45°.
-            var tgtUpRight = Vector3D.Dot(tgtMtx.Up, screenRight);
-            var tgtUpUp = Vector3D.Dot(tgtMtx.Up, screenUp);
+            // Mating roll: angle of target's mate-up around the bore, folded
+            // by pi/2 (4 cardinal mounts all count as docked). Cap +/-45deg.
+            var tgtUpRight = Vector3D.Dot(tgtMateUp, screenRight);
+            var tgtUpUp = Vector3D.Dot(tgtMateUp, screenUp);
             var rawRoll = Math.Atan2(tgtUpRight, tgtUpUp);
             const double Quarter = Math.PI / 2.0;
             var matingRoll = rawRoll - Quarter * Math.Round(rawRoll / Quarter);
 
             // Nose-error: where the bore needs to swing to point at the target
-            // (component of −tgt.Forward perpendicular to bore).
-            var antiTarget = -tgtMtx.Forward;
+            // (component of -tgtAxis perpendicular to bore).
+            var antiTarget = -tgtAxis;
             var noseError = antiTarget - Vector3D.Dot(antiTarget, bore) * bore;
 
             // Small-angle axis-angle representation of the required correction:
